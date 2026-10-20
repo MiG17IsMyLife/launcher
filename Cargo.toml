@@ -1,0 +1,66 @@
+[package]
+name = "dnet-launcher"
+version = "0.1.0"
+edition = "2024"
+
+[[bin]]
+name = "launcher"
+path = "src/main.rs"
+
+[dependencies]
+aes = "0.8"
+cbc = "0.1"
+crc32fast = "1.5.1"
+image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.151"
+sha2 = "0.10"
+zip = "2"
+windows-reactor = { git = "https://github.com/microsoft/windows-rs" }
+
+[dependencies.windows]
+version = "0.62.2"
+features = [
+    "Win32_Devices_HumanInterfaceDevice",
+    "Win32_Foundation",
+    "Win32_Globalization",
+    "Win32_Graphics_Gdi",
+    "Win32_NetworkManagement_IpHelper",
+    "Win32_NetworkManagement_Ndis",
+    "Win32_Networking_WinHttp",
+    "Win32_Networking_WinSock",
+    "Win32_System_LibraryLoader",
+    "Win32_System_Registry",
+    "Win32_UI_Controls",
+    "Win32_UI_Controls_Dialogs",
+    "Win32_UI_Input",
+    "Win32_UI_Input_XboxController",
+    "Win32_UI_WindowsAndMessaging",
+    "Win32_Storage_FileSystem",
+    "Win32_Security",
+    "Win32_Security_Cryptography",
+    "Win32_System_Threading",
+    "Win32_UI_Shell",
+    "Win32_System_JobObjects",
+]
+
+[features]
+# IDAC 接入预留接口（死代码桩）的开关；关闭时不编译相关预留代码，避免二进制膨胀。
+idac = []
+
+[build-dependencies]
+winresource = "0.1"
+windows-reactor-setup = { git = "https://github.com/microsoft/windows-rs" }
+
+[profile.release]
+opt-level = 3
+lto = "fat"
+codegen-units = 1
+strip = "symbols"
+
+[package.metadata.winresource]
+CompanyName = "Project Sasayaki"
+ProductName = "Sasayaki Launcher"
+FileDescription = "Sasayaki Launcher"
+LegalCopyright = "Copyright © 2026 LegalCopyright"
+OriginalFilename = "launcher.exe"

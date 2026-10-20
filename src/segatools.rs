@@ -1,0 +1,1296 @@
+//! segatools（IDAC / Initial D The Arcade）部署与配置生成：
+//!
+//! 工具目录 = inject.exe 所在目录（如 `tools\segatools\`），游戏侧部署目标 =
+//! amdaemon.exe 所在目录。部署内容：工具顶层文件（inject.exe / idachook.dll 等）、
+//! `idac\*.dll`、`idac\config_hook.json` 原样复制；`segatools.ini` 按启动器设置生成；
+//! `appdata` 空目录自动创建；版本命中 spike 时复制 `idac\spike\indrun-<XYZ>.txt`。
+//!
+//! 启动命令行（复刻 idac\launch.bat，CREATE_NO_WINDOW 隐藏窗口，cwd = amdaemon 目录）：
+//! 1. `inject -d -k idachook.dll amdaemon.exe -c <21 个 amdaemon 配置 json>`
+//! 2. `inject -d -k idachook.dll <GameProject exe> -culture=<ja|en> launch=Cabinet
+//!    ABSLOG=..\..\..\..\..\Userdata\GameProject.log -Master -UserDir=..\..\..\Userdata
+//!    -NotInstalled -UNATTENDED`
+//!
+//! segatools.ini 键映射（固定值恒写；可选项未设置不写；整节无键则省略）：
+//!
+//! | 键 | 来源 |
+//! |---|---|
+//! | `[vfs] amfs / option / appdata` | 固定 `amfs` / `option` / `appdata` |
+//! | `[aime] enable` | 固定 `1` |
+//! | `[aime] aimePath` | 选中的 aime 卡：`DEVICE\<code>.txt`；IDZ 未选卡回退 `DEVICE\aime.txt` |
+//! | `[aime] xiScan / xiDeviceIndex` | xinput 模式刷卡键（`xi_card`，捕获过才写）及所在手柄槽位（`pad_index`，有值才写）；样例专有键 |
+//! | `[aime] felicaGen / aimeGen` | IDZ 固定 `0` / `1`（v2+ 必需） |
+//! | `[dns] default` | 网络设置「服务器地址」，默认 SERVER_HOST |
+//! | `[dns] router` | 固定 `10.0.0.254` |
+//! | `[netenv] enable` | 固定 `1` |
+//! | `[keychip] id / subnet / gameId` | 系统设置 Keychip / 网络设置网段 CIDR / 识别库命中的 game_id（SDDF / SDER / SDGT；未识别不写） |
+//! | `[keychip] region` | IDAC：Region JPN→1、EXP→4、CHN→8 |
+//! | `[ds] region` | IDZ：Region 同上映射（样例注释 1=日本 4=出口） |
+//! | `[gpio] dipsw1` | IDZ：「主机」勾选（1/0） |
+//! | `[gfx] enable / width / height / framed` | IDZ：图形设置关闭「默认设置」→ `enable=1` 并写 `width` / `height`（所选分辨率，未设置时默认 1920x1080），无边框模式开启另写 `framed=0`；默认设置开启（含未设置）→ `enable=0`；其余图形选项（全屏 / 渲染倍数 / MSAA / 各向异性过滤）不落 segatools.ini |
+//! | `[system] enable` | 固定 `1` |
+//! | `[system] freeplay` | 投币设置「免费游玩」 |
+//! | `[system] dipsw1` | 机位设置的「主机」勾选（未勾选且单机时自动为 1）；**仅 SDGT** |
+//! | `[system] dipsw2` | 固定 `0`；**仅 SDGT** |
+//! | `[system] dipsw3` | 机位：单机=1、A1/A2/B1/B2=0；**仅 SDGT** |
+//! | `[system] dipsw4` | 机位：单机/A1/B1=0、A2/B2=1；**仅 SDGT** |
+//! | `[system] dipsw5` | 机位：单机/A1/A2=0、B1/B2=1；**仅 SDGT** |
+//! | `[indrun] enable / spike` | 固定 `1` / 按版本匹配 `idac\spike\indrun-<XYZ>.txt` |
+//! | `[led15070] enable` | 固定 `1` |
+//! | `[io4] / [io3] mode / restrict` | 输入类型 / 输入信号限制（原「输入比率」；IDAC=io4，IDZ=io3；未设置时 restrict 用默认 128；coin 不写走默认 F3） |
+//! | `[xinput]` | autoNeutral=1；singleStickSteering=双摇杆取反；线性转向；死区 ×327.67；按钮名映射 start/viewChg/up/down/left/right/shiftDn/shiftUp/coin/accel/brake（← xi_*，捕获过才写，映射同 mice idas.ini） |
+//! | `[dinput]` | 设备 / 轴 / 按键 / 挡位，与 mice idas.ini 同映射 |
+//! | `[ffb] enable` | FFB 板模拟开关（1/0） |
+//! | `[dinput] constantForceStrength / damperStrength / rumbleStrength / rumbleDuration / baseDamperFraction / deadband` | 输入设置 ffb_* 六项（仅 dinput 模式写入） |
+//! | `[aimeio] / [idacio] / [pcbid] / [graphics]` | 不写（内置 IO / 默认 / UE4 自管） |
+
+use std::fs;
+use std::path::{Path, PathBuf};
+
+use crate::mice::{deadzone_value, format_ipv4, parse_cidr, write_atomic, RoomNetOverride, Sections};
+use crate::storage::{
+    CoinConfig, DPAD_CODE_BASE, GraphicsConfig, InputConfig, INPUT_RATIO_DEFAULT, NetworkConfig,
+    SystemConfig,
+};
+use crate::tf;
+
+/// 部署快照：点击启动时由 UI 克隆全局设置构建；`version` 用于 spike 补丁匹配，
+/// `game_id` 决定 [system] dipsw 是否写入（仅 SDGT）。
+pub struct DeploySnapshot {
+    pub net: NetworkConfig,
+    pub system: SystemConfig,
+    pub coin: CoinConfig,
+    pub input: InputConfig,
+    /// 图形设置（config.ini `[graphics]` 节）：仅 IDZ 取「默认设置」与「分辨率」两项映射
+    /// 到 segatools.ini 的 `[gfx]`，其余图形选项不落 segatools.ini
+    pub graphics: GraphicsConfig,
+    /// 游戏版本（如 "3.21.00"，识别库命中构建的版本）
+    pub version: Option<String>,
+    /// 游戏 id（如 "SDGT"）：dipsw 机位键仅对 SDGT 生效
+    pub game_id: Option<String>,
+    /// 选中的 aime 卡（20 位 access code，config.ini `[card] cardfile`）：
+    /// 有值时写 `[aime] aimePath = DEVICE\<code>.txt`
+    pub aime_card: Option<String>,
+    /// 房间模式覆盖（店内对战加入房间时 Some）：[keychip] subnet 指向房间网段
+    pub room: Option<RoomNetOverride>,
+}
+
+// ---------------------------------------------------------------------------
+// 游戏形态：IDZ（SDDF / SDER，Nu）与 IDAC（SDGT，ALLS）的 ini / 命令行差异
+// ---------------------------------------------------------------------------
+
+/// segatools 游戏形态，由 game_id 推导，决定 ini 段与启动命令行差异。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum GameKind {
+    /// IDZ（SDDF / SDER）：[gpio] dipsw1、[ds] region、[io3]、idzhook.dll、
+    /// 游戏行 `-d ... -m`（inject 等待游戏退出）
+    Idz,
+    /// IDAC（SDGT）：[system] dipsw1~5、[keychip] region、[io4]、idachook.dll、
+    /// culture 启动、[indrun] / spike
+    Idac,
+}
+
+/// 由 game_id 推导游戏形态：SDDF / SDER → IDZ，其余（含 SDGT / 未知）→ IDAC。
+pub fn game_kind(game_id: Option<&str>) -> GameKind {
+    match game_id {
+        Some("SDDF") | Some("SDER") => GameKind::Idz,
+        _ => GameKind::Idac,
+    }
+}
+
+/// inject 注入用的 hook dll（需与 cwd 同目录）。
+fn hook_dll(kind: GameKind) -> &'static str {
+    match kind {
+        GameKind::Idz => "idzhook.dll",
+        GameKind::Idac => "idachook.dll",
+    }
+}
+
+// ---------------------------------------------------------------------------
+// segatools.ini 渲染（纯函数，可单测）
+// ---------------------------------------------------------------------------
+
+/// `[keychip] region`（IDAC）/ `[ds] region`（IDZ）：JPN→1、EXP→4、CHN→8；未知地区不写。
+fn region_code(region: Option<&str>) -> Option<&'static str> {
+    match region.map(str::trim) {
+        Some("JPN") => Some("1"),
+        Some("EXP") => Some("4"),
+        Some("CHN") => Some("8"),
+        _ => None,
+    }
+}
+
+/// 机位 → `[system] dipsw3 / dipsw4 / dipsw5`：
+/// 单机（含未设置）= 1/0/0；A1 = 0/0/0；A2 = 0/1/0；B1 = 0/0/1；B2 = 0/1/1。
+fn seat_dipsw(seat: Option<&str>) -> (u8, u8, u8) {
+    match seat.map(str::trim) {
+        Some("A1") => (0, 0, 0),
+        Some("A2") => (0, 1, 0),
+        Some("B1") => (0, 0, 1),
+        Some("B2") => (0, 1, 1),
+        _ => (1, 0, 0), // SINGLE（单机，默认）
+    }
+}
+
+/// 关闭「默认设置」但未指定分辨率时的 `[gfx]` 默认宽高。
+const GFX_RESOLUTION_DEFAULT: (u32, u32) = (1920, 1080);
+
+/// 解析 `"1920x1080"` 形式的分辨率字符串为 (宽, 高)；格式不符或含 0 返回 None。
+fn parse_resolution(v: &str) -> Option<(u32, u32)> {
+    let (w, h) = v.trim().split_once('x')?;
+    let w = w.trim().parse::<u32>().ok()?;
+    let h = h.trim().parse::<u32>().ok()?;
+    (w > 0 && h > 0).then_some((w, h))
+}
+
+/// 启动参数 `-culture`：JPN→ja；EXP / CHN / 未选→en（launch.bat 仅 ja/en 两档）。
+pub fn culture_of(region: Option<&str>) -> &'static str {
+    match region.map(str::trim) {
+        Some("JPN") => "ja",
+        _ => "en",
+    }
+}
+
+/// 按游戏版本匹配 spike 补丁文件名：`3.21.00` 去点取前三位数字 → `indrun-321.txt`，
+/// 在 `tool_dir\idac\spike\` 存在才返回文件名（不含路径）。
+pub fn spike_file(tool_dir: &Path, version: Option<&str>) -> Option<String> {
+    let v = version.map(str::trim).filter(|v| !v.is_empty())?;
+    let digits: String = v.chars().filter(|c| c.is_ascii_digit()).collect();
+    let key = digits.get(0..3)?;
+    let name = format!("indrun-{key}.txt");
+    tool_dir
+        .join("idac")
+        .join("spike")
+        .join(&name)
+        .is_file()
+        .then_some(name)
+}
+
+/// 按启动器全局设置快照渲染 segatools.ini 文本。
+/// `spike` 为版本命中的补丁文件名（见 [`spike_file`]，仅 IDAC），None 则不写 `spike` 键。
+pub fn render_segatools_ini(dep: &DeploySnapshot, spike: Option<&str>) -> String {
+    let kind = game_kind(dep.game_id.as_deref());
+    let mut s = Sections::new();
+
+    // ---- [vfs]：固定相对路径（相对 cwd = amdaemon 目录） ----
+    s.push("vfs", "amfs", "amfs");
+    s.push("vfs", "option", "option");
+    s.push("vfs", "appdata", "appdata");
+
+    // ---- [aime]：IDZ 需 felicaGen / aimeGen（v2+ 必需）；
+    //      aimePath：选了卡指向 DEVICE\<code>.txt，IDZ 未选卡回退默认 DEVICE\aime.txt ----
+    s.push("aime", "enable", "1");
+    match dep
+        .aime_card
+        .as_deref()
+        .map(str::trim)
+        .filter(|c| !c.is_empty())
+    {
+        Some(code) => s.push("aime", "aimePath", &format!(r"DEVICE\{code}.txt")),
+        None if kind == GameKind::Idz => s.push("aime", "aimePath", r"DEVICE\aime.txt"),
+        None => {}
+    }
+    if kind == GameKind::Idz {
+        s.push("aime", "felicaGen", "0");
+        s.push("aime", "aimeGen", "1");
+    }
+    s.push("dns", "default", dep.net.server_host());
+    // router 固定 10.0.0.254（segatools 的 DNS 网关占位，与模拟网段配套）
+    s.push("dns", "router", "10.0.0.254");
+    s.push("netenv", "enable", "1");
+    // IDZ（SDDF / SDER）：网卡序号后缀
+    if kind == GameKind::Idz {
+        s.push("network", "addrSuffix", "12");
+    }
+
+    // ---- [keychip]：序列号 / 网段 / gameId；region：IDZ 在 [ds]，IDAC 在 [keychip] ----
+    if let Some(k) = dep
+        .system
+        .keychip
+        .as_deref()
+        .map(str::trim)
+        .filter(|k| !k.is_empty())
+    {
+        s.push("keychip", "id", k);
+    }
+    // 识别库命中的 game_id（SDDF / SDER / SDGT 等）：未识别（None / 空白）不写
+    if let Some(gid) = dep
+        .game_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|g| !g.is_empty())
+    {
+        s.push("keychip", "gameId", gid);
+    }
+    // 房间模式（店内对战）覆盖：subnet 指向房间网段；否则用网络设置的网段
+    let cidr = dep
+        .room
+        .as_ref()
+        .map(|r| r.cidr.as_str())
+        .or(dep.net.ip.as_deref().map(str::trim).filter(|v| !v.is_empty()));
+    if let Some(cidr) = cidr.filter(|v| !v.is_empty()) {
+        // segatools 的 subnet 只取网段基址（192.168.100.0/24 → 192.168.100.0）
+        if let Some((base, _)) = parse_cidr(cidr) {
+            s.push("keychip", "subnet", &format_ipv4(base));
+        }
+    }
+    if let Some(r) = region_code(dep.system.region.as_deref()) {
+        match kind {
+            GameKind::Idz => s.push("ds", "region", r),
+            GameKind::Idac => s.push("keychip", "region", r),
+        }
+    }
+
+    // ---- [system]：enable / 免费游玩（两种游戏同写）；机位 dipsw 仅 SDGT；
+    //      IDZ 的主机 dipsw1 在 [gpio] ----
+    s.push("system", "enable", "1");
+    if let Some(fp) = dep.coin.freeplay {
+        s.push("system", "freeplay", bool01(fp));
+    }
+    let master = dep
+        .system
+        .master
+        .unwrap_or(dep.system.seat.as_deref().unwrap_or("SINGLE") == "SINGLE");
+    match kind {
+        GameKind::Idz => {
+            s.push("gpio", "dipsw1", bool01(master));
+        }
+        GameKind::Idac => {
+            let (d3, d4, d5) = seat_dipsw(dep.system.seat.as_deref());
+            s.push("system", "dipsw1", bool01(master));
+            s.push("system", "dipsw2", "0");
+            s.push("system", "dipsw3", &d3.to_string());
+            s.push("system", "dipsw4", &d4.to_string());
+            s.push("system", "dipsw5", &d5.to_string());
+        }
+    }
+
+    // ---- [indrun]：仅 IDAC（1.60.00+ 启动补丁，spike 按版本匹配） ----
+    if kind == GameKind::Idac {
+        s.push("indrun", "enable", "1");
+        if let Some(f) = spike {
+            s.push("indrun", "spike", f);
+        }
+    }
+
+    // ---- [led15070] ----
+    s.push("led15070", "enable", "1");
+
+    // ---- [gfx]：IDZ 图形钩子——图形设置关闭「默认设置」时开启（enable=1），
+    //      并写所选分辨率为 width / height（未设置或值异常时默认 1920x1080），
+    //      无边框模式开启另写 framed=0；「默认设置」开启（含未设置）写 enable=0
+    //      （样例默认）。其余图形选项（全屏 / 渲染倍数 / MSAA / 各向异性过滤）
+    //      由游戏侧加载器处理，不落 segatools.ini ----
+    if kind == GameKind::Idz {
+        let custom = dep.graphics.default == Some(false);
+        s.push("gfx", "enable", bool01(custom));
+        if custom {
+            let (w, h) = dep
+                .graphics
+                .resolution
+                .as_deref()
+                .and_then(parse_resolution)
+                .unwrap_or(GFX_RESOLUTION_DEFAULT);
+            s.push("gfx", "width", &w.to_string());
+            s.push("gfx", "height", &h.to_string());
+            if dep.graphics.borderless == Some(true) {
+                s.push("gfx", "framed", "0");
+            }
+        }
+    }
+
+    // ---- 输入段：IDZ 为 [io3]，IDAC 为 [io4]；restrict = 输入信号限制（原「输入比率」，未设置时默认 128）；
+    //      test / service / coin 走默认 ----
+    let io = match kind {
+        GameKind::Idz => "io3",
+        GameKind::Idac => "io4",
+    };
+
+    // ---- 输入段：输入类型 / 比率（test / service / coin 走默认 F1 / F2 / F3） ----
+    let kind_lower = dep
+        .input
+        .kind
+        .as_deref()
+        .map(|v| v.trim().to_ascii_lowercase());
+    match kind_lower.as_deref() {
+        Some("xinput") => s.push(io, "mode", "xinput"),
+        Some("dinput") => s.push(io, "mode", "dinput"),
+        _ => {}
+    }
+    s.push(
+        io,
+        "restrict",
+        &dep.input.ratio.unwrap_or(INPUT_RATIO_DEFAULT).to_string(),
+    );
+
+    // ---- [xinput]：仅 XInput 模式（映射同 mice idas.ini） ----
+    if kind_lower.as_deref() == Some("xinput") {
+        s.push("xinput", "autoNeutral", "1");
+        // 双摇杆模式开启 → 单摇杆转向关闭（singleStickSteering = 0）；关闭/未设置 → 1。
+        // 始终写入，避免未切换过 dual_stick（默认 None）时游戏缺少该键而行为不确定。
+        let dual = dep.input.dual_stick.unwrap_or(false);
+        s.push("xinput", "singleStickSteering", bool01(!dual));
+        // 线性方向：xinput 模式下未设置时默认开启（与输入设置 UI 默认一致）
+        let linear = dep.input.linear_steering.unwrap_or(true);
+        s.push("xinput", "linearSteering", bool01(linear));
+        let ldz = dep.input.left_deadzone.unwrap_or(20);
+        let rdz = dep.input.right_deadzone.unwrap_or(20);
+        s.push("xinput", "leftStickDeadzone", &deadzone_value(ldz).to_string());
+        s.push("xinput", "rightStickDeadzone", &deadzone_value(rdz).to_string());
+        // 按钮名映射：仅在用户捕获过（已设置且非空）时写出，否则交 segatools 默认（A/B/DPAD_* 等）兜底
+        push_xi_button(&mut s, "xinput", "start", &dep.input.xi_start);
+        push_xi_button(&mut s, "xinput", "viewChg", &dep.input.xi_view);
+        push_xi_button(&mut s, "xinput", "up", &dep.input.xi_up);
+        push_xi_button(&mut s, "xinput", "down", &dep.input.xi_down);
+        push_xi_button(&mut s, "xinput", "left", &dep.input.xi_left);
+        push_xi_button(&mut s, "xinput", "right", &dep.input.xi_right);
+        push_xi_button(&mut s, "xinput", "shiftDn", &dep.input.xi_shift_dn);
+        push_xi_button(&mut s, "xinput", "shiftUp", &dep.input.xi_shift_up);
+        push_xi_button(&mut s, "xinput", "coin", &dep.input.xi_coin);
+        // 油门 / 刹车源（trigger 或按钮名）：仅在用户捕获过（已设置且非空）时写出，
+        // 否则交 segatools 默认（扳机模拟量）兜底
+        push_xi_button(&mut s, "xinput", "accel", &dep.input.xi_accel);
+        push_xi_button(&mut s, "xinput", "brake", &dep.input.xi_brake);
+    }
+
+    // ---- [aime] 刷卡键：样例专有键，刷卡键在 [aime] 下而非 [xinput]（mice 才有 card）；
+    //      xiScan 用 [xinput] 同款按钮名与 "+" 组合语法，默认 NONE 关闭 → 捕获过才写；
+    //      xiDeviceIndex = xiScan 所用手柄槽位 0~3（默认 0，与捕获时 pad_index 未选回退 0 一致） ----
+    if kind_lower.as_deref() == Some("xinput") {
+        if let Some(v) = dep.input.xi_card.as_deref().map(str::trim).filter(|v| !v.is_empty()) {
+            s.push("aime", "xiScan", v);
+            if let Some(n) = dep.input.pad_index {
+                s.push("aime", "xiDeviceIndex", &n.to_string());
+            }
+        }
+    }
+
+    // ---- [dinput]：仅 DirectInput 模式（映射同 mice idas.ini，另含 dpad / 挡位） ----
+    // 按键落库时十字键方向为 1001~1004（DPAD_CODE_BASE + 方向号）；segatools 的
+    // dinput 只认 DirectInput 按钮号且自带 D-Pad 模拟，故这些伪码一律不写。
+    let is_di_button = |n: u32| n < DPAD_CODE_BASE;
+    if kind_lower.as_deref() == Some("dinput") {
+        if let Some(v) = dep.input.wheel_device.as_deref().map(str::trim).filter(|v| !v.is_empty()) {
+            s.push("dinput", "deviceName", v);
+        }
+        if let Some(v) = dep.input.pedal_device.as_deref().map(str::trim).filter(|v| !v.is_empty()) {
+            s.push("dinput", "pedalsName", v);
+        }
+        if let Some(v) = dep.input.shifter_device.as_deref().map(str::trim).filter(|v| !v.is_empty()) {
+            s.push("dinput", "shifterName", v);
+        }
+        if let Some(n) = dep.input.throttle_axis.as_deref() {
+            s.push("dinput", "accelAxis", n);
+        }
+        if let Some(n) = dep.input.brake_axis.as_deref() {
+            s.push("dinput", "brakeAxis", n);
+        }
+        if let Some(n) = dep.input.start_button.filter(|n| is_di_button(*n)) {
+            s.push("dinput", "start", &n.to_string());
+        }
+        if let Some(n) = dep.input.view_button.filter(|n| is_di_button(*n)) {
+            s.push("dinput", "viewChg", &n.to_string());
+        }
+        if let Some(n) = dep.input.left_button.filter(|n| is_di_button(*n)) {
+            s.push("dinput", "left", &n.to_string());
+        }
+        if let Some(n) = dep.input.right_button.filter(|n| is_di_button(*n)) {
+            s.push("dinput", "right", &n.to_string());
+        }
+        if let Some(n) = dep.input.up_button.filter(|n| is_di_button(*n)) {
+            s.push("dinput", "up", &n.to_string());
+        }
+        if let Some(n) = dep.input.down_button.filter(|n| is_di_button(*n)) {
+            s.push("dinput", "down", &n.to_string());
+        }
+        if let Some(n) = dep.input.shift_down.filter(|n| is_di_button(*n)) {
+            s.push("dinput", "shiftDn", &n.to_string());
+        }
+        if let Some(n) = dep.input.shift_up.filter(|n| is_di_button(*n)) {
+            s.push("dinput", "shiftUp", &n.to_string());
+        }
+        for (i, gear) in [
+            dep.input.gear1_button,
+            dep.input.gear2_button,
+            dep.input.gear3_button,
+            dep.input.gear4_button,
+            dep.input.gear5_button,
+            dep.input.gear6_button,
+        ]
+        .iter()
+        .enumerate()
+        {
+            if let Some(n) = gear.filter(|n| is_di_button(*n)) {
+                s.push("dinput", &format!("gear{}", i + 1), &n.to_string());
+            }
+        }
+        s.push(
+            "dinput",
+            "reverseAccelAxis",
+            bool01(dep.input.reverse_accel_axis.unwrap_or(false)),
+        );
+        s.push(
+            "dinput",
+            "reverseBrakeAxis",
+            bool01(dep.input.reverse_brake_axis.unwrap_or(false)),
+        );
+
+        // 力反馈强度（与样例 segatools.ini 一致：这 6 项属 [dinput]，仅 DirectInput 模式使用）
+        s.push(
+            "dinput",
+            "constantForceStrength",
+            &dep.input.ffb_constant_force.unwrap_or(100).to_string(),
+        );
+        s.push(
+            "dinput",
+            "damperStrength",
+            &dep.input.ffb_damper.unwrap_or(100).to_string(),
+        );
+        s.push(
+            "dinput",
+            "rumbleStrength",
+            &dep.input.ffb_rumble.unwrap_or(100).to_string(),
+        );
+        s.push(
+            "dinput",
+            "rumbleDuration",
+            &dep.input.ffb_rumble_duration.unwrap_or(100).to_string(),
+        );
+        s.push(
+            "dinput",
+            "baseDamperFraction",
+            &dep.input.ffb_base_damper.unwrap_or(20).to_string(),
+        );
+        s.push(
+            "dinput",
+            "deadband",
+            &dep.input.ffb_dead_band.unwrap_or(20).to_string(),
+        );
+    }
+
+    // ---- [ffb]：FFB 板模拟开关（强度 6 项属 [dinput]，见上） ----
+    s.push("ffb", "enable", bool01(dep.input.ffb_enable.unwrap_or(true)));
+
+    s.to_string()
+}
+
+/// segatools.ini 的布尔值写法：`1` / `0`（不用 true / false）。
+fn bool01(b: bool) -> &'static str {
+    if b {
+        "1"
+    } else {
+        "0"
+    }
+}
+
+/// 写入 XInput 按钮名映射：仅当名称已设置且非空时才写出对应键，否则交 segatools 默认兜底。
+/// 按钮名主要写 [xinput] 节；刷卡键例外，写 [aime] xiScan（见样例专有键）。
+fn push_xi_button(s: &mut Sections, section: &str, key: &str, name: &Option<String>) {
+    if let Some(v) = name.as_deref().map(str::trim).filter(|v| !v.is_empty()) {
+        s.push(section, key, v);
+    }
+}
+
+// ---------------------------------------------------------------------------
+// 启动命令行（复刻 launch.bat：idac 为 idachook + 22 配置 + culture；
+// idz 为 idzhook + configDHCP 配置（SDDF 7 个 JP/EX，SDER 4 个 ZH）+ `-m`，
+// 参数构建为纯函数，可单测）
+// ---------------------------------------------------------------------------
+
+/// IDAC amdaemon `-c` 的配置文件清单（顺序与 idac\launch.bat 一致，末尾为 config_hook.json）
+pub const AMDAEMON_CONFIGS: &[&str] = &[
+    "config_common.json",
+    "config_ex.json",
+    "config_jp.json",
+    "config_laninstall_client_ex.json",
+    "config_laninstall_client_jp.json",
+    "config_laninstall_server_ex.json",
+    "config_laninstall_server_jp.json",
+    "config_aime_high_ex.json",
+    "config_aime_high_jp.json",
+    "config_aime_normal_ex.json",
+    "config_aime_normal_jp.json",
+    "config_seat_1_ex.json",
+    "config_seat_1_jp.json",
+    "config_seat_2_ex.json",
+    "config_seat_2_jp.json",
+    "config_seat_3_ex.json",
+    "config_seat_3_jp.json",
+    "config_seat_4_ex.json",
+    "config_seat_4_jp.json",
+    "config_seat_single_ex.json",
+    "config_seat_single_jp.json",
+    "config_hook.json",
+];
+
+/// IDZ（SDDF）amdaemon `-c` 的配置文件清单（顺序与 idz\launch.bat 一致）
+pub const IDZ_AMDAEMON_CONFIGS: &[&str] = &[
+    "configDHCP_Final_Common.json",
+    "configDHCP_Final_JP.json",
+    "configDHCP_Final_JP_ST1.json",
+    "configDHCP_Final_JP_ST2.json",
+    "configDHCP_Final_EX.json",
+    "configDHCP_Final_EX_ST1.json",
+    "configDHCP_Final_EX_ST2.json",
+];
+
+/// IDZ（SDER）amdaemon `-c` 的配置文件清单（顺序与 SDER 的 launch.bat 一致）
+pub const IDZ_AMDAEMON_CONFIGS_SDER: &[&str] = &[
+    "configDHCP_Final_Common.json",
+    "configDHCP_Final_ZH.json",
+    "configDHCP_Final_ZH_ST1.json",
+    "configDHCP_Final_ZH_ST2.json",
+];
+
+/// amdaemon `-c` 使用的配置清单：IDAC 固定一套；IDZ 按 game_id 区分
+/// （SDDF → JP/EX 7 配置，SDER → ZH 4 配置）
+fn amdaemon_configs(kind: GameKind, game_id: Option<&str>) -> &'static [&'static str] {
+    match (kind, game_id) {
+        (GameKind::Idz, Some("SDER")) => IDZ_AMDAEMON_CONFIGS_SDER,
+        (GameKind::Idz, _) => IDZ_AMDAEMON_CONFIGS,
+        (GameKind::Idac, _) => AMDAEMON_CONFIGS,
+    }
+}
+
+/// ① 拉起 amdaemon 的参数：`-d -k <hook dll> amdaemon.exe -c <配置清单>`
+pub fn amdaemon_args(kind: GameKind, game_id: Option<&str>) -> Vec<String> {
+    let mut args: Vec<String> = ["-d", "-k", hook_dll(kind), "amdaemon.exe", "-c"]
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
+    args.extend(amdaemon_configs(kind, game_id).iter().map(|s| s.to_string()));
+    args
+}
+
+/// ② 拉起游戏主程序的参数。
+/// IDAC：`<游戏exe> -culture=<ja|en> launch=Cabinet ABSLOG=... -Master UserDir=... ...`
+/// （`game_exe` / `user_dir` 为绝对路径，ABSLOG / UserDir 不用 launch.bat 的相对
+/// 路径——cwd 深度不同会指错位置）；
+/// IDZ：`-d -k idzhook.dll <游戏exe> -m`（`-m` = inject 等待游戏退出后返回，
+/// 与 idz\launch.bat 原样一致；缺失会导致 inject 注入后立即退出）。
+pub fn game_args(
+    kind: GameKind,
+    game_exe: &Path,
+    culture: &str,
+    user_dir: &Path,
+) -> Vec<String> {
+    let mut args: Vec<String> = vec!["-d".to_string()];
+    args.push("-k".to_string());
+    args.push(hook_dll(kind).to_string());
+    args.push(game_exe.to_string_lossy().into_owned());
+    match kind {
+        GameKind::Idz => args.push("-m".to_string()),
+        GameKind::Idac => {
+            let user = user_dir.to_string_lossy().into_owned();
+            args.push(format!("-culture={culture}"));
+            args.push("launch=Cabinet".to_string());
+            args.push(format!("ABSLOG={}\\GameProject.log", user));
+            args.push("-Master".to_string());
+            args.push(format!("UserDir={user}"));
+            args.push("-NotInstalled".to_string());
+            args.push("-UNATTENDED".to_string());
+        }
+    }
+    args
+}
+
+/// 从 amdaemon.exe 所在目录向上定位游戏包的 **Userdata** 目录：
+/// 自身 → 最多 4 级祖先，逐级找名字为 `Userdata` 的子目录，命中即返回绝对路径；
+/// 找不到回退 `<amdaemon 目录>\..\..\Userdata`（常见 IDAC 包布局）。
+pub fn find_userdata_dir(amdaemon_dir: &Path) -> PathBuf {
+    let mut cur = Some(amdaemon_dir);
+    for _ in 0..5 {
+        let Some(p) = cur else { break };
+        let cand = p.join("Userdata");
+        if cand.is_dir() {
+            return cand;
+        }
+        cur = p.parent();
+    }
+    amdaemon_dir.join(r"..\..\Userdata")
+}
+
+// ---------------------------------------------------------------------------
+// 部署：复制工具文件 + 生成配置（幂等）
+// ---------------------------------------------------------------------------
+
+/// 复制 src → dest：大小与修改时间都相同则跳过（幂等）。
+fn copy_if_changed(src: &Path, dest: &Path) -> Result<(), String> {
+    if let (Ok(a), Ok(b)) = (fs::metadata(src), fs::metadata(dest)) {
+        if a.len() == b.len() && a.modified().ok() == b.modified().ok() {
+            return Ok(());
+        }
+    }
+    fs::copy(src, dest)
+        .map(|_| ())
+        .map_err(|e| tf!("复制 {} 失败：{e}", "Failed to copy {}: {e}", src.display()))
+}
+
+/// 部署 segatools 到 amdaemon.exe 所在目录 `dir`（按 `game_id` 区分 IDZ / IDAC 形态）：
+/// 1. 复制工具目录顶层常规文件（inject.exe / hook dll 等，跳过 *.log）；
+/// 2. 复制 `tool_dir\idac|idz\` 顶层 *.dll（hook dll 需与 cwd 同目录）；IDAC 另复制 config_hook.json；
+/// 3. 写生成的 segatools.ini（IDAC 含版本命中的 spike 文件名）；
+/// 4. 自动创建 option / appdata 目录；IDAC 版本命中 spike 时复制 `idac\spike\indrun-<XYZ>.txt`。
+pub fn deploy(dir: &Path, tool_dir: &Path, dep: &DeploySnapshot) -> Result<(), String> {
+    if !dir.is_dir() {
+        return Err(tf!(
+            "amdaemon 目录不存在：{}",
+            "amdaemon directory does not exist: {}",
+            dir.display()
+        ));
+    }
+    if !tool_dir.is_dir() {
+        return Err(tf!(
+            "segatools 工具目录不存在：{}",
+            "segatools tool directory does not exist: {}",
+            tool_dir.display()
+        ));
+    }
+    let kind = game_kind(dep.game_id.as_deref());
+    // 配置 / hook dll 的来源子目录：idac\（IDAC）或 idz\（IDZ）
+    let sub = match kind {
+        GameKind::Idz => "idz",
+        GameKind::Idac => "idac",
+    };
+    let sub_dir = tool_dir.join(sub);
+
+    // spike 先匹配（决定 segatools.ini 的 spike 键；仅 IDAC 有 spike 补丁）
+    let spike = match kind {
+        GameKind::Idac => spike_file(tool_dir, dep.version.as_deref()),
+        GameKind::Idz => None,
+    };
+
+    // 另一种游戏形态的 hook dll 不属于本游戏（IDZ 不带 idachook.dll，反之亦然）
+    let other_hook = match kind {
+        GameKind::Idz => "idachook.dll",
+        GameKind::Idac => "idzhook.dll",
+    };
+
+    // 1) 工具目录顶层常规文件（跳过 *.log 与对方 hook dll；生成的 segatools.ini 稍后覆盖）
+    let entries = fs::read_dir(tool_dir)
+        .map_err(|e| tf!("读取工具目录失败（{}）：{e}", "Failed to read tool directory ({}): {e}", tool_dir.display()))?;
+    for e in entries.flatten() {
+        let Ok(ft) = e.file_type() else { continue };
+        if !ft.is_file() {
+            continue;
+        }
+        let name = e.file_name().to_string_lossy().into_owned();
+        if name.to_lowercase().ends_with(".log") || name.to_lowercase() == other_hook {
+            continue;
+        }
+        copy_if_changed(&e.path(), &dir.join(&name))?;
+    }
+    // 清掉以前误拷到游戏目录的对方 hook dll 残留
+    let stale = dir.join(other_hook);
+    if stale.is_file() {
+        let _ = fs::remove_file(&stale);
+    }
+
+    // 2) <sub>\ 顶层 *.dll（hook dll 需与 cwd 同目录）；IDAC 另复制 config_hook.json
+    if let Ok(entries) = fs::read_dir(&sub_dir) {
+        for e in entries.flatten() {
+            let Ok(ft) = e.file_type() else { continue };
+            let name = e.file_name().to_string_lossy().into_owned();
+            if ft.is_file() && name.to_lowercase().ends_with(".dll") {
+                copy_if_changed(&e.path(), &dir.join(&name))?;
+            }
+        }
+    }
+    if kind == GameKind::Idac {
+        let hook_json = sub_dir.join("config_hook.json");
+        if !hook_json.is_file() {
+            return Err(tf!(
+                "segatools 工具目录缺少 idac\\config_hook.json（{}）",
+                "segatools tool directory is missing idac\\config_hook.json ({})",
+                hook_json.display()
+            ));
+        }
+        copy_if_changed(&hook_json, &dir.join("config_hook.json"))?;
+    }
+
+    // 3) 生成的 segatools.ini
+    write_atomic(&dir.join("segatools.ini"), &render_segatools_ini(dep, spike.as_deref()))?;
+
+    // 4) option / appdata 目录（segatools 对 [vfs] 各路径要求存在，缺失会 FATAL）+
+    //    spike 补丁文件
+    for sub in ["option", "appdata"] {
+        let d = dir.join(sub);
+        if !d.is_dir() {
+            fs::create_dir_all(&d).map_err(|e| {
+                tf!(
+                    "创建 {sub} 目录失败（{}）：{e}",
+                    "Failed to create {sub} directory ({}): {e}",
+                    d.display()
+                )
+            })?;
+        }
+    }
+    if let Some(name) = &spike {
+        copy_if_changed(
+            &sub_dir.join("spike").join(name),
+            &dir.join(name),
+        )?;
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::mice::{format_ipv4, last_host, mask_of, parse_cidr};
+
+    fn snapshot() -> DeploySnapshot {
+        DeploySnapshot {
+            net: NetworkConfig::default(),
+            system: SystemConfig::default(),
+            coin: CoinConfig::default(),
+            input: crate::storage::InputConfig::default(),
+            graphics: crate::storage::GraphicsConfig::default(),
+            version: None,
+            game_id: None,
+            aime_card: None,
+            room: None,
+        }
+    }
+
+    #[test]
+    fn render_fixed_sections_only() {
+        // 全部设置未填：只有固定段；[keychip] 无键整节省略
+        let text = render_segatools_ini(&snapshot(), None);
+        assert!(text.contains("[vfs]\namfs = amfs\noption = option\nappdata = appdata\n"));
+        assert!(text.contains("[aime]\nenable = 1"));
+        assert!(text.contains("[dns]\ndefault = sdgt.arcadehub.xyz\nrouter = 10.0.0.254\n"));
+        assert!(text.contains("[netenv]\nenable = 1"));
+        assert!(text.contains("[system]\nenable = 1"));
+        assert!(text.contains("[indrun]\nenable = 1"));
+        assert!(text.contains("[led15070]\nenable = 1"));
+        assert!(text.contains("[ffb]\nenable = 1"));
+        assert!(!text.contains("[keychip]"), "未设置 keychip 时整节省略");
+        assert!(!text.contains("spike"), "无 spike 时不写 spike 键");
+        // 输入类型未设置时不写 mode，但 restrict 始终存在（默认 128）
+        assert!(text.contains("[io4]\nrestrict = 128\n"));
+        // segatools.ini 布尔值一律 1/0，不出现 true/false
+        assert!(!text.contains("true") && !text.contains("false"));
+    }
+
+    #[test]
+    fn render_keychip_and_freeplay() {
+        let mut dep = snapshot();
+        dep.system.keychip = Some(" A69E-01A88888888 ".into());
+        dep.system.region = Some("CHN".into());
+        dep.net.ip = Some("192.168.100.0/24".into());
+        dep.coin.freeplay = Some(true);
+        let text = render_segatools_ini(&dep, None);
+        assert!(text.contains("id = A69E-01A88888888"));
+        assert!(text.contains("subnet = 192.168.100.0"), "subnet 只写基址不带 /前缀");
+        assert!(text.contains("region = 8"));
+        assert!(text.contains("freeplay = 1"));
+    }
+
+    #[test]
+    fn keychip_game_id_written_when_known() {
+        // 识别库命中的 game_id 写入 [keychip] gameId；未识别（None / 空白）不写
+        let mut dep = snapshot();
+        dep.game_id = Some(" SDGT ".into());
+        let text = render_segatools_ini(&dep, None);
+        assert!(
+            text.contains("[keychip]\ngameId = SDGT"),
+            "game_id 落 [keychip]，其余键未设时整节只有 gameId：\n{text}"
+        );
+
+        // 与 keychip 序列号共存：同一节
+        dep.system.keychip = Some("A69E-01A88888888".into());
+        dep.net.ip = Some("192.168.100.0/24".into());
+        let text = render_segatools_ini(&dep, None);
+        let keychip = text.split("[keychip]").nth(1).expect("应存在 [keychip] 节");
+        assert!(keychip.contains("gameId = SDGT"), "gameId 与序列号同节：\n{text}");
+        assert!(keychip.contains("id = A69E-01A88888888"));
+        assert!(keychip.contains("subnet = 192.168.100.0"));
+
+        // game_id 未知（None / 空白）：不写 gameId；全空时 [keychip] 整节省略
+        let mut dep = snapshot();
+        dep.game_id = Some("  ".into());
+        let text = render_segatools_ini(&dep, None);
+        assert!(!text.contains("gameId"), "空白 game_id 不写：\n{text}");
+        assert!(!text.contains("[keychip]"), "无键时整节省略：\n{text}");
+    }
+
+    #[test]
+    fn render_subnet_room_override() {
+        // 房间模式（店内对战）：subnet 指向房间网段基址，忽略网络设置的网段
+        let mut dep = snapshot();
+        dep.net.ip = Some("192.168.100.0/24".into());
+        dep.room = Some(RoomNetOverride {
+            cidr: crate::awl::ROOM_CIDR.to_string(),
+            my_game_ip: Some("172.10.1.103".into()),
+            server_ip: crate::awl::HOST_SERVERBOX_IP.to_string(),
+        });
+        let text = render_segatools_ini(&dep, None);
+        assert!(
+            text.contains("subnet = 172.10.1.0"),
+            "房间模式下 subnet 应写房间网段基址：\n{text}"
+        );
+        assert!(!text.contains("192.168.100.0"), "不应再写原网段：\n{text}");
+
+        // 非房间模式：维持网络设置的网段
+        dep.room = None;
+        let text = render_segatools_ini(&dep, None);
+        assert!(text.contains("subnet = 192.168.100.0"), "非房间模式走原网段：\n{text}");
+    }
+
+    #[test]
+    fn restrict_always_written_from_ratio() {
+        // IDAC（io4）：ratio 未设置 → 默认 128；设置 → 原值
+        let text = render_segatools_ini(&snapshot(), None);
+        assert!(text.contains("[io4]\nrestrict = 128\n"), "未设置比率时写默认 128");
+
+        let mut dep = snapshot();
+        dep.input.ratio = Some(96);
+        let text = render_segatools_ini(&dep, None);
+        assert!(text.contains("[io4]\nrestrict = 96\n"));
+
+        // IDZ（io3）：同样始终写入
+        let mut dep = snapshot();
+        dep.game_id = Some("SDDF".into());
+        dep.version = None;
+        let text = render_segatools_ini(&dep, None);
+        assert!(text.contains("[io3]\nrestrict = 128\n"), "IDZ 未设置比率时写默认 128");
+
+        dep.input.ratio = Some(200);
+        let text = render_segatools_ini(&dep, None);
+        assert!(text.contains("[io3]\nrestrict = 200\n"));
+    }
+
+    #[test]
+    fn region_and_culture_mapping() {
+        assert_eq!(region_code(Some("JPN")), Some("1"));
+        assert_eq!(region_code(Some("EXP")), Some("4"));
+        assert_eq!(region_code(Some("CHN")), Some("8"));
+        assert_eq!(region_code(Some("XXX")), None);
+        assert_eq!(region_code(None), None);
+        assert_eq!(culture_of(Some("JPN")), "ja");
+        assert_eq!(culture_of(Some("EXP")), "en");
+        assert_eq!(culture_of(Some("CHN")), "en");
+        assert_eq!(culture_of(None), "en");
+    }
+
+    #[test]
+    fn spike_matching_by_version() {
+        // 纯函数部分：版本去点取前三位
+        let digits: String = "3.21.00".chars().filter(|c| c.is_ascii_digit()).collect();
+        assert_eq!(&digits[0..3], "321");
+        // 真实工具目录（target\debug\tools\segatools）：3.21.00 命中 321，2.80.00 命中 280
+        let tool = Path::new("target/debug/tools/segatools");
+        if tool.is_dir() {
+            assert_eq!(
+                spike_file(tool, Some("3.21.00")).as_deref(),
+                Some("indrun-321.txt")
+            );
+            assert_eq!(
+                spike_file(tool, Some("2.80.00")).as_deref(),
+                Some("indrun-280.txt")
+            );
+            assert_eq!(spike_file(tool, Some("9.99.00")), None);
+            assert_eq!(spike_file(tool, None), None);
+        }
+    }
+
+    #[test]
+    fn amdaemon_args_match_launch_bat() {
+        // IDAC：22 个配置，idachook.dll
+        let args = amdaemon_args(GameKind::Idac, None);
+        assert_eq!(args.len(), 5 + AMDAEMON_CONFIGS.len());
+        assert_eq!(&args[..5], &["-d", "-k", "idachook.dll", "amdaemon.exe", "-c"]);
+        assert_eq!(args[5], "config_common.json");
+        assert_eq!(*args.last().unwrap(), "config_hook.json");
+        assert_eq!(AMDAEMON_CONFIGS.len(), 22);
+
+        // IDZ（SDDF）：7 个 configDHCP JP/EX 配置，idzhook.dll
+        let args = amdaemon_args(GameKind::Idz, Some("SDDF"));
+        assert_eq!(args.len(), 5 + IDZ_AMDAEMON_CONFIGS.len());
+        assert_eq!(&args[..5], &["-d", "-k", "idzhook.dll", "amdaemon.exe", "-c"]);
+        assert_eq!(args[5], "configDHCP_Final_Common.json");
+        assert_eq!(*args.last().unwrap(), "configDHCP_Final_EX_ST2.json");
+        assert_eq!(IDZ_AMDAEMON_CONFIGS.len(), 7);
+
+        // IDZ（SDER）：4 个 configDHCP ZH 配置，idzhook.dll
+        let args = amdaemon_args(GameKind::Idz, Some("SDER"));
+        assert_eq!(args.len(), 5 + IDZ_AMDAEMON_CONFIGS_SDER.len());
+        assert_eq!(&args[..5], &["-d", "-k", "idzhook.dll", "amdaemon.exe", "-c"]);
+        assert_eq!(args[5], "configDHCP_Final_Common.json");
+        assert_eq!(*args.last().unwrap(), "configDHCP_Final_ZH_ST2.json");
+        assert_eq!(IDZ_AMDAEMON_CONFIGS_SDER.len(), 4);
+    }
+
+    #[test]
+    fn game_args_use_absolute_userdir() {
+        // IDAC：culture + Cabinet + Userdata 全套
+        let args = game_args(
+            GameKind::Idac,
+            Path::new(r"D:\Game\GameProject-Win64-Shipping.exe"),
+            "ja",
+            Path::new(r"G:\idac\sdgt321\App\Userdata"),
+        );
+        assert_eq!(
+            args,
+            vec![
+                "-d",
+                "-k",
+                "idachook.dll",
+                r"D:\Game\GameProject-Win64-Shipping.exe",
+                "-culture=ja",
+                "launch=Cabinet",
+                r"ABSLOG=G:\idac\sdgt321\App\Userdata\GameProject.log",
+                "-Master",
+                r"UserDir=G:\idac\sdgt321\App\Userdata",
+                "-NotInstalled",
+                "-UNATTENDED",
+            ]
+        );
+
+        // IDZ：`inject -d -k idzhook.dll InitialD0_DX11_Nu.exe -m`
+        let args = game_args(
+            GameKind::Idz,
+            Path::new(r"D:\Game\InitialD0_DX11_Nu.exe"),
+            "en",
+            Path::new(r"D:\Game\Userdata"),
+        );
+        assert_eq!(
+            args,
+            vec![
+                "-d",
+                "-k",
+                "idzhook.dll",
+                r"D:\Game\InitialD0_DX11_Nu.exe",
+                "-m"
+            ]
+        );
+    }
+
+    #[test]
+    fn idz_ini_uses_gpio_ds_io3() {
+        // IDZ（SDDF / SDER）：dipsw1 在 [gpio]、region 在 [ds]、输入段 [io3]、
+        // 无 [indrun] / [system] dipsw；aime 段带 felicaGen / aimeGen 与默认 aimePath
+        let mut dep = snapshot();
+        dep.game_id = Some("SDDF".into());
+        dep.system.region = Some("JPN".into());
+        dep.system.master = Some(true);
+        dep.input.kind = Some("xinput".into());
+        let text = render_segatools_ini(&dep, None);
+        assert!(text.contains("[gpio]\ndipsw1 = 1"));
+        assert!(text.contains("[ds]\nregion = 1"));
+        assert!(text.contains("felicaGen = 0"));
+        assert!(text.contains("aimeGen = 1"));
+        assert!(text.contains(r"aimePath = DEVICE\aime.txt"), "未选卡回退默认");
+        assert!(text.contains("[network]\naddrSuffix = 12"), "IDZ 带 addrSuffix");
+        assert!(text.contains("[io3]"), "IDZ 输入段为 io3");
+        assert!(text.contains("[gfx]
+enable = 0"), "IDZ 图形钩子默认关闭");
+        assert!(!text.contains("[indrun]"), "IDZ 无 indrun");
+        assert!(!text.contains("dipsw3"), "机位 dipsw 仅 SDGT");
+        assert!(!text.contains("[keychip]\nregion"), "IDZ region 不在 keychip");
+    }
+
+    #[test]
+    fn idz_gfx_follows_default_toggle_and_resolution() {
+        // SDDF / SDER：关闭「默认设置」→ [gfx] enable=1 + 分辨率 width/height；
+        // 默认设置开启（含未设置）→ enable=0，不写宽高
+        let mut dep = snapshot();
+        dep.game_id = Some("SDDF".into());
+        let text = render_segatools_ini(&dep, None);
+        assert!(text.contains("[gfx]\nenable = 0"), "默认设置未关闭：\n{text}");
+        assert!(!text.contains("width") && !text.contains("height"));
+
+        dep.graphics.default = Some(false);
+        dep.graphics.resolution = Some("1920x1080".into());
+        let text = render_segatools_ini(&dep, None);
+        assert!(
+            text.contains("[gfx]\nenable = 1\nwidth = 1920\nheight = 1080"),
+            "关闭默认设置 + 选分辨率：\n{text}"
+        );
+        assert!(!text.contains("framed"), "无边框未开启不写 framed：\n{text}");
+
+        // 关闭默认设置但未选分辨率：宽高回退默认 1920x1080
+        let mut dep = snapshot();
+        dep.game_id = Some("SDER".into());
+        dep.graphics.default = Some(false);
+        let text = render_segatools_ini(&dep, None);
+        assert!(
+            text.contains("[gfx]\nenable = 1\nwidth = 1920\nheight = 1080"),
+            "未选分辨率应写默认宽高：\n{text}"
+        );
+
+        // 无边框模式开启 → [gfx] framed=0；其余图形选项（全屏 / 渲染倍数 / MSAA / AF）不落
+        dep.graphics.borderless = Some(true);
+        dep.graphics.fullscreen = Some(true);
+        dep.graphics.render_scale = Some(true);
+        dep.graphics.render_scale_level = Some("2x".into());
+        dep.graphics.msaa = Some(true);
+        dep.graphics.msaa_level = Some("4x".into());
+        dep.graphics.af = Some(true);
+        dep.graphics.af_level = Some("16x".into());
+        let text = render_segatools_ini(&dep, None);
+        assert!(
+            text.contains("[gfx]\nenable = 1\nwidth = 1920\nheight = 1080\nframed = 0"),
+            "无边框开启应写 framed=0：\n{text}"
+        );
+        for key in ["fullscreen", "render_scale", "msaa", "af_level"] {
+            assert!(!text.contains(key), "{key} 不应写入 segatools.ini：\n{text}");
+        }
+
+        // 无边框明确关闭：不写 framed
+        dep.graphics.borderless = Some(false);
+        let text = render_segatools_ini(&dep, None);
+        assert!(!text.contains("framed"), "无边框关闭不写 framed：\n{text}");
+
+        // SDGT（IDAC）不写 [gfx]
+        let mut dep = snapshot();
+        dep.game_id = Some("SDGT".into());
+        dep.graphics.default = Some(false);
+        dep.graphics.resolution = Some("1920x1080".into());
+        let text = render_segatools_ini(&dep, None);
+        assert!(!text.contains("[gfx]"), "IDAC 无 [gfx] 节：\n{text}");
+
+        // 分辨率值异常：enable 仍为 1，宽高回退默认 1920x1080
+        let mut dep = snapshot();
+        dep.game_id = Some("SDER".into());
+        dep.graphics.default = Some(false);
+        dep.graphics.resolution = Some("bogus".into());
+        let text = render_segatools_ini(&dep, None);
+        assert!(
+            text.contains("[gfx]\nenable = 1\nwidth = 1920\nheight = 1080"),
+            "分辨率异常应回退默认宽高：\n{text}"
+        );
+    }
+
+    #[test]
+    fn parse_resolution_accepts_wxh_only() {
+        assert_eq!(parse_resolution("1920x1080"), Some((1920, 1080)));
+        assert_eq!(parse_resolution(" 1360x768 "), Some((1360, 768)));
+        assert_eq!(parse_resolution("1920x0"), None);
+        assert_eq!(parse_resolution("1920"), None);
+        assert_eq!(parse_resolution("axb"), None);
+    }
+
+    #[test]
+    fn find_userdata_dir_walks_up() {
+        let tmp = std::env::temp_dir().join(format!("dnet_segatools_{}", std::process::id()));
+        let deep = tmp.join("App").join("DAC").join("AMDaemon");
+        fs::create_dir_all(&deep).unwrap();
+        // 命中：上两层有 Userdata
+        let userdata = tmp.join("App").join("Userdata");
+        fs::create_dir_all(&userdata).unwrap();
+        assert_eq!(find_userdata_dir(&deep), userdata);
+        // 未命中：回退 ..\..\Userdata
+        let bare = tmp.join("bare");
+        fs::create_dir_all(&bare).unwrap();
+        assert_eq!(find_userdata_dir(&bare), bare.join(r"..\..\Userdata"));
+        fs::remove_dir_all(&tmp).ok();
+    }
+
+    #[test]
+    fn ipv4_helpers_still_work_via_mice_reexports() {
+        // 复用 mice 的网段纯函数：保证 pub(crate) 改动后行为不变
+        assert_eq!(parse_cidr("192.168.100.130/24"), Some((0xC0A86400, 24)));
+        assert_eq!(format_ipv4(0xC0A86400), "192.168.100.0");
+        assert_eq!(mask_of(24), 0xFFFFFF00);
+        assert_eq!(last_host(0xC0A86400, 24), Some(0xC0A8_64FE));
+    }
+
+    #[test]
+    fn dinput_dpad_pseudo_codes_are_skipped() {
+        // 十字键方向（1001~1004）不是 DirectInput 按钮号，segatools 自带 D-Pad 模拟 → 不写
+        let mut dep = snapshot();
+        dep.input.kind = Some("dinput".into());
+        dep.input.up_button = Some(1001);
+        dep.input.left_button = Some(1004);
+        dep.input.start_button = Some(2);
+        let text = render_segatools_ini(&dep, None);
+        assert!(text.contains("start = 2"), "真实按钮号应照写");
+        assert!(!text.contains("up = "), "十字键伪码不应写入 dinput");
+        assert!(!text.contains("left = "), "十字键伪码不应写入 dinput");
+    }
+
+    #[test]
+    fn xinput_button_mappings_written() {
+        // xinput 模式：捕获过的自定义按键映射进 [xinput]（键名同 mice idas.ini）；
+        // 刷卡键例外，写 [aime] xiScan 并带所在手柄槽位 xiDeviceIndex
+        let mut dep = snapshot();
+        dep.input.kind = Some("xinput".into());
+        dep.input.pad_index = Some(2);
+        dep.input.xi_start = Some(" A ".into());
+        dep.input.xi_view = Some("BACK".into());
+        dep.input.xi_up = Some("DPAD_UP".into());
+        dep.input.xi_shift_up = Some("RB".into());
+        dep.input.xi_coin = Some("X".into());
+        dep.input.xi_card = Some("Y".into());
+        dep.input.xi_accel = Some("RT".into());
+        dep.input.xi_brake = Some("LT".into());
+        let text = render_segatools_ini(&dep, None);
+        assert!(text.contains("start = A"), "前后空白应 trim：\n{text}");
+        assert!(text.contains("viewChg = BACK"));
+        assert!(text.contains("up = DPAD_UP"));
+        assert!(text.contains("shiftUp = RB"));
+        assert!(text.contains("coin = X"));
+        assert!(text.contains("accel = RT"));
+        assert!(text.contains("brake = LT"));
+        assert!(text.contains("xiScan = Y"), "刷卡键写 [aime] xiScan：\n{text}");
+        assert!(
+            text.contains("xiDeviceIndex = 2"),
+            "xiScan 所用手柄槽位：\n{text}"
+        );
+        assert!(!text.contains("card = "), "[xinput] 无 card 键（mice 才有）：\n{text}");
+    }
+
+    #[test]
+    fn xinput_button_bindings_skipped_when_unset_or_blank() {
+        // 未捕获 / 空白：不写对应键，交 segatools 默认兜底
+        let mut dep = snapshot();
+        dep.input.kind = Some("xinput".into());
+        dep.input.xi_left = Some("  ".into());
+        let text = render_segatools_ini(&dep, None);
+        assert!(!text.contains("left = "), "空白视为未设置：\n{text}");
+        assert!(!text.contains("start = "), "未捕获的槽位不写：\n{text}");
+        assert!(!text.contains("xiScan"), "未捕获刷卡键不写 xiScan：\n{text}");
+        assert!(!text.contains("xiDeviceIndex"), "无 xiScan 不写槽位：\n{text}");
+    }
+
+    #[test]
+    fn xinput_button_bindings_ignored_in_dinput_mode() {
+        // dinput 模式下 xi_* 不参与：按键走 [dinput] 按钮号，刷卡键也不写 xiScan
+        let mut dep = snapshot();
+        dep.input.kind = Some("dinput".into());
+        dep.input.pad_index = Some(1);
+        dep.input.xi_start = Some("A".into());
+        dep.input.xi_card = Some("Y".into());
+        let text = render_segatools_ini(&dep, None);
+        assert!(!text.contains("[xinput]"), "dinput 模式无 [xinput] 节：\n{text}");
+        assert!(!text.contains("start = A"), "xi_* 不应写进 dinput 配置：\n{text}");
+        assert!(!text.contains("xiScan"), "dinput 模式不写 xiScan：\n{text}");
+        assert!(!text.contains("xiDeviceIndex"), "dinput 模式不写槽位：\n{text}");
+    }
+
+    #[test]
+    fn deploy_copies_idz_hook_dll() {
+        let tool = Path::new("target/debug/tools/segatools");
+        if !tool.join("idz").is_dir() {
+            return; // 无真实工具目录时跳过
+        }
+        let dir = std::env::temp_dir().join(format!("dnet_idz_deploy_{}", std::process::id()));
+        fs::remove_dir_all(&dir).ok();
+        fs::create_dir_all(&dir).unwrap();
+
+        let mut dep = snapshot();
+        dep.game_id = Some("SDDF".into());
+        deploy(&dir, tool, &dep).expect("IDZ 部署应成功");
+
+        assert!(dir.join("inject.exe").is_file(), "工具顶层 inject.exe 应拷贝");
+        assert!(
+            dir.join("idzhook.dll").is_file(),
+            "idz\\idzhook.dll 应拷贝到 amdaemon 目录"
+        );
+        assert!(dir.join("segatools.ini").is_file());
+        assert!(dir.join("option").is_dir() && dir.join("appdata").is_dir());
+        assert!(
+            !dir.join("config_hook.json").exists(),
+            "IDZ 不需要 config_hook.json"
+        );
+        // ini 为 IDZ 形态
+        let ini = fs::read_to_string(dir.join("segatools.ini")).unwrap();
+        assert!(ini.contains("[gpio]"));
+        assert!(!ini.contains("[indrun]"));
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn aime_path_written_only_when_selected() {
+        let mut dep = snapshot();
+        dep.aime_card = Some("53314980123456789012".into());
+        let text = render_segatools_ini(&dep, None);
+        assert!(text.contains(r"aimePath = DEVICE\53314980123456789012.txt"));
+
+        dep.aime_card = None;
+        let text = render_segatools_ini(&dep, None);
+        assert!(!text.contains("aimePath"), "未选卡不写 aimePath");
+        assert!(text.contains("enable = 1"));
+    }
+
+    #[test]
+    fn ffb_strength_keys_live_in_dinput() {
+        let mut dep = snapshot();
+        dep.input.kind = Some("dinput".into());
+        let text = render_segatools_ini(&dep, None);
+        let dinput = text.split("[dinput]").nth(1).expect("应存在 [dinput] 段");
+        for key in [
+            "constantForceStrength",
+            "damperStrength",
+            "rumbleStrength",
+            "rumbleDuration",
+            "baseDamperFraction",
+            "deadband",
+        ] {
+            assert!(dinput.contains(key), "{key} 应位于 [dinput] 段");
+        }
+        let ffb = text.split("[ffb]").nth(1).expect("应存在 [ffb] 段");
+        assert!(ffb.contains("enable = 1"));
+        assert!(!ffb.contains("Strength"), "[ffb] 不含强度键");
+        // 布尔一律 1/0
+        assert!(!text.contains("true") && !text.contains("false"));
+    }
+
+    #[test]
+    fn seat_dipsw_mapping() {
+        // 单机（含 None）= dipsw3=1 dipsw4=0 dipsw5=0；A1=000 A2=010 B1=001 B2=011
+        assert_eq!(seat_dipsw(None), (1, 0, 0));
+        assert_eq!(seat_dipsw(Some("SINGLE")), (1, 0, 0));
+        assert_eq!(seat_dipsw(Some("A1")), (0, 0, 0));
+        assert_eq!(seat_dipsw(Some("A2")), (0, 1, 0));
+        assert_eq!(seat_dipsw(Some("B1")), (0, 0, 1));
+        assert_eq!(seat_dipsw(Some("B2")), (0, 1, 1));
+        assert_eq!(seat_dipsw(Some("???")), (1, 0, 0), "未知值回退单机");
+    }
+
+    #[test]
+    fn sdgt_system_dipsw_only_for_sdgt() {
+        // SDGT + 未设置机位：默认单机 + 主机 → dipsw1=1 dipsw2=0 dipsw3=1 dipsw4=0 dipsw5=0
+        let mut dep = snapshot();
+        dep.game_id = Some("SDGT".into());
+        let text = render_segatools_ini(&dep, None);
+        assert!(text.contains("dipsw1 = 1"));
+        assert!(text.contains("dipsw2 = 0"));
+        assert!(text.contains("dipsw3 = 1"));
+        assert!(text.contains("dipsw4 = 0"));
+        assert!(text.contains("dipsw5 = 0"));
+        assert!(!text.contains("[network]"), "addrSuffix 仅 IDZ（SDDF / SDER）");
+
+        // SDGT + A2 + 明确非主机：dipsw1=0 dipsw3=0 dipsw4=1 dipsw5=0
+        dep.system.seat = Some("A2".into());
+        dep.system.master = Some(false);
+        let text = render_segatools_ini(&dep, None);
+        assert!(text.contains("dipsw1 = 0"));
+        assert!(text.contains("dipsw3 = 0"));
+        assert!(text.contains("dipsw4 = 1"));
+        assert!(text.contains("dipsw5 = 0"));
+
+        // SDDF（非 SDGT）：机位 dipsw3~5 不写，主机走 [gpio] dipsw1
+        dep.game_id = Some("SDDF".into());
+        dep.system.seat = Some("B2".into());
+        let text = render_segatools_ini(&dep, None);
+        assert!(text.contains("[system]"), "enable/freeplay 仍在");
+        assert!(text.contains("[gpio]
+dipsw1"), "SDDF 主机在 [gpio] dipsw1");
+        assert!(!text.contains("dipsw2"), "dipsw2 仅 SDGT");
+        assert!(!text.contains("dipsw3"), "dipsw3 仅 SDGT");
+        assert!(!text.contains("dipsw4"), "dipsw4 仅 SDGT");
+        assert!(!text.contains("dipsw5"), "dipsw5 仅 SDGT");
+    }
+
+    #[test]
+    fn dns_uses_server_setting() {
+        let mut dep = snapshot();
+        dep.net.server = Some(" my.server.net ".into());
+        let text = render_segatools_ini(&dep, None);
+        assert!(text.contains("default = my.server.net"));
+        assert!(!text.contains("sdgt.arcadehub.xyz"), "自定义服务器时不再写默认域名");
+    }
+}

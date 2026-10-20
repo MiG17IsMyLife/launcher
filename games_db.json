@@ -1,0 +1,295 @@
+{
+  "version": 1,
+  "games": [
+    {
+        "name": "InitialD Arcade Stage 4 JPN",
+        "game_id": "SBML",
+        "platform": "Lindbergh",
+        "loader": "kitten",
+        "image": "logo_D4.png",
+        "support_game": [
+          {
+              "crc": "0x361d1cbe",
+              "version": "REV A",
+              "sb_crc": "0x60496eea"
+          },
+          {
+              "crc": "0x606914be",
+              "version": "REV B",
+              "sb_crc": "0x60496eea"
+          }
+        ]
+    },
+    {
+        "name": "InitialD Arcade Stage 4 kai JPN",
+        "game_id": "SBML",
+        "platform": "Lindbergh",
+        "loader": "kitten",
+        "image": "logo_D4kai.png",
+        "support_game": [
+          {
+            "crc": "0x6cb19701",
+            "version": "REV G",
+            "sb_crc": "0x60496eea"
+          }
+        ]
+    },
+    {
+        "name": "InitialD Arcade Stage 5 JPN",
+        "game_id": "SBQZ",
+        "platform": "Lindbergh",
+        "loader": "kitten",
+        "image": "logo_D5.png",
+        "support_game": [
+          {
+              "crc": "0xb3183112",
+              "version": "REV A",
+              "sb_crc": "0x5fd379cd"
+          },
+          {
+              "crc": "0xda04e5e0",
+              "version": "REV C",
+              "sb_crc": "0x5fd379cd"
+          }
+        ]
+    },
+    {
+        "name": "InitialD Arcade Stage 5 EXP 2.0",
+        "game_id": "SBTS",
+        "platform": "Lindbergh",
+        "loader": "kitten",
+        "image": "logo_D5.png",
+        "support_game": [
+          {
+              "crc": "0xd4910e75",
+              "version": "REV A",
+              "sb_crc": ""
+          }
+        ]
+    },
+    {
+        "name": "InitialD Arcade Stage 6AA JPN",
+        "game_id": "SBUU",
+        "platform": "RingEdge",
+        "loader": "mice",
+        "image": "logo_D6.png",
+        "support_game": [
+          {
+              "crc": "0x1c1f9208",
+              "version": "1.0",
+              "sb_crc": "0x21c615b8"
+          },
+          {
+              "crc": "0x02b784fc",
+              "version": "1.2",
+              "sb_crc": "0x21c615b8"
+          }
+        ]
+    },
+    {
+        "name": "InitialD Arcade Stage 6AA EXP",
+        "game_id": "SBVW",
+        "platform": "RingEdge",
+        "loader": "mice",
+        "image": "logo_D6.png",
+        "support_game": [
+          {
+              "crc": "0x38b55f4a",
+              "version": "1.2",
+              "sb_crc": "0x2fbfa69d"
+          }
+        ]      
+    },
+    {
+        "name": "InitialD Arcade Stage 6AA CHN 全国对战版",
+        "game_id": "SBWV",
+        "platform": "RingEdge",
+        "loader": "mice",
+        "image": "logo_D6chn.png",
+        "support_game": [
+          {
+              "crc": "0x44b3752a",
+              "version": "2.0",
+              "sb_crc": "0x7aa1bca2"
+          }
+        ]       
+    },
+    {
+        "name": "InitialD Arcade Stage 7AAX JPN",
+        "game_id": "SBYD",
+        "platform": "RingEdge",
+        "loader": "mice",
+        "image": "logo_D7.png",
+        "support_game": [
+          {
+              "crc": "0x12d3189a",
+              "version": "1.0",
+              "sb_crc": "0x8c1ca5c7"
+          }
+        ]
+    },  
+    {
+        "name": "InitialD Arcade Stage 7AAX CHN 全国对战版",
+        "game_id": "SBYY",
+        "platform": "RingEdge",
+        "loader": "mice",
+        "image": "logo_D7chn.png",
+        "support_game": [
+          {
+              "crc": "0x3696414d",
+              "version": "1.0",
+              "sb_crc": "0xe0c72e96"  
+          }
+        ]
+    },    
+    {
+        "name": "InitialD Arcade Stage 8 JPN",
+        "game_id": "SBZZ",
+        "platform": "RingEdge",
+        "loader": "mice",
+        "image": "logo_D8.png",
+        "support_game": [
+          {
+              "crc": "0x0c9c7989",
+              "version": "1.0",
+              "sb_crc": "0x8667432a"  
+          },
+          {
+              "crc": "0x1fd6136a",
+              "version": "2.01",
+              "sb_crc": "0x8667432a"
+          },
+          {
+              "crc": "0x1ed1b5b1",
+              "version": "2.02",
+              "sb_crc": "0x8667432a"
+          }
+        ]
+    }, 
+    {
+        "name": "InitialD Arcade Stage 8 EXP",
+        "game_id": "SDAL",
+        "platform": "RingEdge",
+        "loader": "mice",
+        "image": "logo_D8.png",
+        "support_game": [
+          {
+              "crc": "0x32d8bdf5",
+              "version": "1.2",
+              "sb_crc": "0x3e8207b8"  
+          }
+        ]
+    },
+    {
+        "name": "InitialD The Arcade Season 5",
+        "game_id": "SDGT",
+        "platform": "ALLS",
+        "loader": "segatools",
+        "image": "logo_dac.png",
+        "support_game": [
+          {
+              "version": "3.21.00"
+          }
+        ]        
+    },
+    {
+        "name": "InitialD The Arcade Season 4",
+        "game_id": "SDGT",
+        "platform": "ALLS",
+        "loader": "segatools",
+        "image": "logo_dac.png",
+        "support_game": [
+          {
+              "version": "2.80.00"
+          }
+        ]        
+    },
+    {
+        "name": "InitialD The Arcade Season 3",
+        "game_id": "SDGT",
+        "platform": "ALLS",
+        "loader": "segatools",
+        "image": "logo_dac.png",
+        "support_game": [
+          {
+              "version": "2.31.00"
+          }
+        ]        
+    },
+    {
+        "name": "InitialD The Arcade Season 2",
+        "game_id": "SDGT",
+        "platform": "ALLS",
+        "loader": "segatools",
+        "image": "logo_dac.png",
+        "support_game": [
+          {
+              "version": "1.70.00"
+          }
+        ]        
+    },
+    {
+        "name": "InitialD The Arcade Season 1",
+        "game_id": "SDGT",
+        "platform": "ALLS",
+        "loader": "segatools",
+        "image": "logo_dac.png",
+        "support_game": [
+          {
+              "version": "1.31.00"
+          }
+        ]        
+    },
+    {
+        "name": "InitialD Arcade Stage Zero",
+        "game_id": "SDDF",
+        "platform": "Nu",
+        "loader": "segatools",
+        "image": "logo_idz.png",
+        "support_game": [
+          {
+              "version": "1.30.00"
+          }
+        ]        
+    },
+    {
+        "name": "InitialD Arcade Stage Zero Ver.2",
+        "game_id": "SDDF",
+        "platform": "Nu",
+        "loader": "segatools",
+        "image": "logo_idz.png",
+        "support_game": [
+          {
+              "version": "2.31.00"
+          }
+        ]
+    },
+    {
+        "name": "InitialD Arcade Stage Zero CHN",
+        "game_id": "SDER",
+        "platform": "Nu",
+        "loader": "segatools",
+        "image": "logo_idz.png",
+        "support_game": [
+          {
+              "version": "1.44.00"
+          }
+        ]
+    }
+  ],
+  "card_reader": {
+        "name": "picodaemon",
+        "platform": "RingEdge",
+        "loader": "mice",
+        "support_game": [
+          {
+              "crc": "0x037ff93c",
+              "version": "2014"
+          },
+          {
+              "crc": "0xd2939f28",
+              "version": "2007"
+          }
+        ]
+  }
+}
