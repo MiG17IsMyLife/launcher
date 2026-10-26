@@ -12,9 +12,9 @@
 //!      游戏=基址+102）、`subnet_mask`、`gateway`/`primary_dns`（网段末地址）；
 //!    - 主机（本机游戏）IP → idas.ini `[ServerBox] game_ip`（仅关闭模拟网络时写；
 //!      房间模式下快照值已按房间覆盖替换：房主 .101 / 成员座位 IP）；
-//!    - 「跳过读卡器初始化」→ idas.ini `[ServerBox] skipInitialization`，取反且
-//!      **始终写出**（上条「未设置一律不写」的例外）：勾选 → `false`，
-//!      未勾选 / 从未设置 → `true`；
+//!    - 「跳过读卡器初始化」→ idas.ini `[ServerBox] skipInitialization`，**同向**且
+//!      **始终写出**（上条「未设置一律不写」的例外）：勾选 → `true`，
+//!      未勾选 / 从未设置 → `false`；
 //!    - 日志级别未设置时写 info（4，mice 默认）。
 //! 2. `deploy`：把 mice 工具目录（mice.exe 所在目录，即 launcher\tools\mice\）顶层文件
 //!    复制到目标目录（排除运行时产物与启动器生成的配置），并原子写 `<目录>\mice\` 下的
@@ -134,6 +134,17 @@ fn log_level_num(v: &str) -> Option<u32> {
     }
 }
 
+/// 地区（launcher 值）→ mice `[sysconf] region` 数值。
+/// mice 二进制说明：Board region. 1 = Jpn, 2 = USA, 4 = Exp, 8 = Chn。
+fn region_num(v: &str) -> Option<u32> {
+    match v.trim().to_ascii_uppercase().as_str() {
+        "JPN" => Some(1),
+        "EXP" => Some(4),
+        "CHN" => Some(8),
+        _ => None,
+    }
+}
+
 /// 日志级别快照值 → 数值；未设置 / 非法值一律按默认 info（4）。
 fn log_level_value(v: Option<&str>) -> u32 {
     v.and_then(log_level_num).unwrap_or(4)
@@ -222,6 +233,11 @@ pub fn render_config(dep: &DeploySnapshot, target: MiceTarget) -> String {
     // ---- [sysconf] ----
     if let Some(k) = dep.system.keychip.as_deref().map(str::trim).filter(|k| !k.is_empty()) {
         s.push("sysconf", "keychip_serial", k);
+    }
+    if let Some(r) = dep.system.region.as_deref().map(str::trim).filter(|r| !r.is_empty()) {
+        if let Some(n) = region_num(r) {
+            s.push("sysconf", "region", &n.to_string());
+        }
     }
     if let Some(fp) = dep.coin.freeplay {
         s.push("sysconf", "freeplay", bool_str(fp));
@@ -329,12 +345,12 @@ pub fn render_idas(dep: &DeploySnapshot) -> String {
     let sim = dep.net.simulate.unwrap_or(true);
     s.push("ServerBox", "offlineMode", "false");
     s.push("ServerBox", "simulateNetwork", bool_str(sim));
-    // 「跳过读卡器初始化」→ skipInitialization 取反：勾选 → false，未勾选 / 未设置 → true。
-    // 反直觉是产品定案，别按字面改回同向；且该键始终写出，不交 mice 默认兜底。
+    // 「跳过读卡器初始化」→ skipInitialization 同向：勾选 → true，未勾选 / 未设置 → false。
+    // 该键始终写出（不交 mice 默认兜底），语义与开关一致，勿改回取反。
     s.push(
         "ServerBox",
         "skipInitialization",
-        bool_str(dep.system.skip_reader_init != Some(true)),
+        bool_str(dep.system.skip_reader_init == Some(true)),
     );
 
     // ---- [ServerBox] 静态 IP：仅关闭模拟网络时才写 ----
@@ -765,6 +781,25 @@ mod tests {
     }
 
     #[test]
+    fn render_config_region_mapping() {
+        let mut dep = snapshot();
+        for (raw, want) in [("JPN", 1), ("EXP", 4), ("CHN", 8)] {
+            dep.system.region = Some(raw.into());
+            assert!(
+                render_config(&dep, MiceTarget::Game).contains(&format!("region = {want}")),
+                "{raw} → {want}"
+            );
+        }
+        // 未知地区 / 未设置不写
+        dep.system.region = Some("USA".into());
+        assert!(!render_config(&dep, MiceTarget::Game).contains("region ="));
+        dep.system.region = Some(" jpn ".into()); // trim + 大小写不敏感
+        assert!(render_config(&dep, MiceTarget::Game).contains("region = 1"));
+        dep.system.region = None;
+        assert!(!render_config(&dep, MiceTarget::Game).contains("region ="));
+    }
+
+    #[test]
     fn render_config_keychip_freeplay_and_window() {
         let mut dep = snapshot();
         dep.system.keychip = Some(" A69E-01A99999999 ".into());
@@ -798,13 +833,13 @@ mod tests {
         dep.coin.car_coin = Some(1);
         let text = render_idas(&dep);
         // [io3] restrict_ 始终写出（未设置比率时默认 128）；
-        // skipInitialization 也始终写出，未设置开关时为 true
+        // skipInitialization 也始终写出，未设置开关时为 false（同向，未勾选=不跳过）
         assert_eq!(
             text,
             "[ServerBox]\n\
              offlineMode = false\n\
              simulateNetwork = true\n\
-             skipInitialization = true\n\
+             skipInitialization = false\n\
              \n\
              [Coins]\n\
              start = 2\n\
@@ -815,10 +850,10 @@ mod tests {
         );
     }
 
-    /// 「跳过读卡器初始化」→ idas.ini `[ServerBox] skipInitialization` 取反且始终写出
+    /// 「跳过读卡器初始化」→ idas.ini `[ServerBox] skipInitialization` 同向且始终写出
     #[test]
-    fn render_idas_skip_initialization_inverted_always_written() {
-        for (skip, want) in [(None, "true"), (Some(false), "true"), (Some(true), "false")] {
+    fn render_idas_skip_initialization_same_direction_always_written() {
+        for (skip, want) in [(None, "false"), (Some(false), "false"), (Some(true), "true")] {
             let mut dep = snapshot();
             dep.system.skip_reader_init = skip;
             let text = render_idas(&dep);

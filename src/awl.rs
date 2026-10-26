@@ -35,17 +35,32 @@ const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 const LOCAL_API_HOST: &str = "127.0.0.1";
 const LOCAL_API_PORT: u16 = 8639;
 const AWL_VERSION_EXPECT: &str = "v0.19.0-mp2";
-const LOCAL_API_READY_TIMEOUT: Duration = Duration::from_secs(15);
+/// awl API 就绪时限。首次运行需完成一次性初始化（wintun 驱动首载/适配器
+/// 创建、杀软首次扫描），Win10 上可超过 15s，故放宽到 60s；正常路径 API
+/// 秒级就绪即返回，不会空等。
+const LOCAL_API_READY_TIMEOUT: Duration = Duration::from_secs(60);
 const LINK_TIMEOUT: Duration = Duration::from_secs(30);
+/// 版本自检时限：旧版 / 异常构建的 awl-tray 不识别 `-v` 且常驻运行时，
+/// `output()` 会永久阻塞，建房任务随之卡死（无错误框、目录请求也不发）。
+const VERSION_CHECK_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// 房间固定编址（与 PoC/roomdir 约定一致，单房间机制下全服复用同一网段）。
 pub const HOST_GAME_IP: &str = "172.10.1.101";
 pub const HOST_SERVERBOX_IP: &str = "172.10.1.102";
 /// 房间子网（网络地址形式，mice 网段派生 / 防火墙 / TUN 配置共用）。
 pub const ROOM_CIDR: &str = "172.10.1.0/24";
+/// 房间内成员表长连接同步端口（房主在 HOST_GAME_IP 上监听，仅房间子网可达）。
+pub const ROOM_SYNC_PORT: u16 = 27510;
 /// awl 虚拟网卡名（TUN 配置与「网络设置」页识别共用）。
 pub const AWL_IFACE_NAME: &str = "awl0";
 const AWL_IFACE: &str = AWL_IFACE_NAME;
+
+/// 房主是否需要 ServerBox 副地址 .102：仅 IDZ（SDDF/SDER）与 IDAC（SDGT）单地址
+/// （房主只保留游戏主 IP .101，成员座位 .103/.104/.105 由目录分配）；
+/// 其余游戏（IDAS4~8 等，含未知 game_id）保持双地址不变。
+pub fn room_host_needs_serverbox_ip(game_id: &str) -> bool {
+    !matches!(game_id, "SDDF" | "SDER" | "SDGT")
+}
 
 /// 房间会话状态（UI 状态机 / 状态栏展示）。
 #[derive(Clone, PartialEq, Debug)]
@@ -76,19 +91,48 @@ pub struct PeerView {
     pub through_relay: bool,
 }
 
-/// 持有 awl 子进程；析构时 kill 进程并关闭作业对象。
-/// `job` 设置了 KILL_ON_JOB_CLOSE：launcher 无论正常退出/崩溃/被强杀，系统都收掉 awl。
+/// 持有 awl 子进程；析构时先请求优雅退出，超时才强杀，最后关闭作业对象。
+///
+/// 优雅退出链：POST /api/v0/app/quit → awl-tray 回 200 后 systray.Quit →
+/// onExit → StopServer → app.Close → NativeTun.Close（销毁 wintun 适配器）。
+/// 强杀（TerminateProcess）不执行 Close，wintun 适配器会残留并占用静态
+/// RequestedGUID，导致下次开房 awl 报「failed to create TUN device:
+/// cannot create a file when that file already exists」。
+/// `job` 设置了 KILL_ON_JOB_CLOSE：launcher 崩溃/被强杀时系统兜底收掉 awl。
 pub struct AwlHandle {
     child: Child,
     job: Option<usize>,
 }
 
+/// 优雅退出等待时限：awl-tray 的 app.Close（P2P + TUN 清理）秒级完成，
+/// 超时按异常处理走强杀。
+const QUIT_WAIT_TIMEOUT: Duration = Duration::from_secs(5);
+
 impl Drop for AwlHandle {
     fn drop(&mut self) {
+        // 顺序不能反：quit 必须趁 awl 还活着发（job 一关 KILL_ON_JOB_CLOSE 立即杀进程）。
+        // quit 请求失败（awl 已死/从未就绪）直接走强杀，不空等。
+        let quit_sent = AwlManager::quit_request();
+        if quit_sent {
+            let deadline = Instant::now() + QUIT_WAIT_TIMEOUT;
+            while Instant::now() < deadline {
+                if matches!(self.child.try_wait(), Ok(Some(_))) {
+                    break;
+                }
+                std::thread::sleep(Duration::from_millis(100));
+            }
+        }
         let _ = self.child.kill();
         let _ = self.child.wait();
         crate::vpn::close_job(self.job);
     }
+}
+
+/// spawn_and_wait_ready 的失败形态：Exited 携带终态错误文案（不重试）；
+/// NotReady = 就绪超时（外层自动重试一次）。
+enum SpawnWaitFail {
+    Exited(String),
+    NotReady,
 }
 
 pub struct AwlManager;
@@ -226,12 +270,49 @@ impl AwlManager {
         Ok((status, body.to_string()))
     }
 
+    /// 请求 awl 优雅退出（POST /api/v0/app/quit）。成功返回 true。
+    /// awl 未运行 / API 未就绪时连接立即失败，返回 false（调用方走强杀路径）。
+    fn quit_request() -> bool {
+        matches!(
+            Self::local_request("POST", "/api/v0/app/quit", None),
+            Ok((200, _))
+        )
+    }
+
     /// 版本自检：`awl-tray.exe -v` 必须包含期望版本（两台机器与补丁版一致性靠它保证）。
+    /// 带时限轮询：超时强杀并报错——这是建房链路里唯一可能无限阻塞的 awl 调用，
+    /// 不设时限时表现为「创建房间没反应、目录请求也不发」且无任何错误框。
     pub fn version_check(exe: &Path) -> Result<(), String> {
-        let out = Command::new(exe)
+        let mut child = Command::new(exe)
             .arg("-v")
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
             .creation_flags(CREATE_NO_WINDOW)
-            .output()
+            .spawn()
+            .map_err(|e| tf!("无法执行 awl-tray.exe：{e}", "Cannot execute awl-tray.exe: {e}"))?;
+        let deadline = Instant::now() + VERSION_CHECK_TIMEOUT;
+        loop {
+            match child.try_wait() {
+                Ok(Some(_)) => break,
+                Ok(None) if Instant::now() < deadline => {
+                    std::thread::sleep(Duration::from_millis(100));
+                }
+                Ok(None) => {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    return Err(t!(
+                        "awl-tray.exe -v 未在时限内退出（疑似旧版本常驻运行或被杀软拦截），请更新 tools/awl/ 下的 awl-tray.exe",
+                        "awl-tray.exe -v did not exit in time (possibly an old resident build or blocked by antivirus); please update awl-tray.exe under tools/awl/"
+                    )
+                    .to_string());
+                }
+                Err(e) => {
+                    return Err(tf!("无法执行 awl-tray.exe：{e}", "Cannot execute awl-tray.exe: {e}"))
+                }
+            }
+        }
+        let out = child
+            .wait_with_output()
             .map_err(|e| tf!("无法执行 awl-tray.exe：{e}", "Cannot execute awl-tray.exe: {e}"))?;
         let text = format!(
             "{}{}",
@@ -366,6 +447,9 @@ impl AwlManager {
         loop {
             if Self::has_identity() {
                 drop(handle);
+                // 实例 A 刚被 kill，稍等 8639 端口释放再返回；host_flow/join_flow
+                // 随后 write_config/防火墙步骤本身耗时长，此处 500ms 无感知。
+                std::thread::sleep(Duration::from_millis(500));
                 return Ok(());
             }
             if Instant::now() >= deadline {
@@ -376,16 +460,44 @@ impl AwlManager {
         }
     }
 
-    /// 拉起 awl 子进程并等待本机 API 就绪。
+    /// 拉起 awl 子进程并等待本机 API 就绪；超时自动重试一次。
+    ///
+    /// 首次运行的一次性初始化（wintun 驱动首载/适配器创建、杀软首扫）偶发
+    /// 拖慢甚至卡死首拉起，kill 后重拉通常立即就绪——两次都超时才报错。
     fn spawn_awl(exe: &Path) -> Result<AwlHandle, String> {
+        for attempt in 0..2 {
+            match Self::spawn_and_wait_ready(exe) {
+                Ok(handle) => return Ok(handle),
+                Err(SpawnWaitFail::Exited(msg)) => return Err(msg),
+                Err(SpawnWaitFail::NotReady) => {
+                    if attempt == 1 {
+                        return Err(t!(
+                            "awl API 未在时限内就绪（首次运行需初始化虚拟网卡，可能较慢；请再试一次）",
+                            "awl API did not become ready in time (first run initializes the virtual adapter and can be slow; please retry)"
+                        )
+                        .to_string());
+                    }
+                }
+            }
+        }
+        unreachable!("retry loop always returns")
+    }
+
+    /// 单次 spawn + 就绪等待；子进程退出与超时以不同错误区分
+    /// （「启动后立即退出」语义准确，不参与重试）。
+    fn spawn_and_wait_ready(exe: &Path) -> Result<AwlHandle, SpawnWaitFail> {
         let mut cmd = Command::new(exe);
         cmd.env("AWL_DATA_DIR", Self::data_dir());
         cmd.stdout(Stdio::null()).stderr(Stdio::null());
         #[cfg(windows)]
         cmd.creation_flags(CREATE_NO_WINDOW);
-        let mut child = cmd
-            .spawn()
-            .map_err(|e| tf!("启动 awl 失败（{}）：{e}", "Failed to start awl ({}): {e}", exe.display()))?;
+        let mut child = cmd.spawn().map_err(|e| {
+            SpawnWaitFail::Exited(tf!(
+                "启动 awl 失败（{}）：{e}",
+                "Failed to start awl ({}): {e}",
+                exe.display()
+            ))
+        })?;
         let job = crate::vpn::attach_job(&child);
 
         let deadline = Instant::now() + LOCAL_API_READY_TIMEOUT;
@@ -393,11 +505,11 @@ impl AwlManager {
             if let Ok(Some(_)) = child.try_wait() {
                 crate::vpn::close_job(job);
                 let _ = child.wait();
-                return Err(t!(
+                return Err(SpawnWaitFail::Exited(t!(
                     "awl 启动后立即退出（常见原因：杀软拦截或缺少管理员权限）",
                     "awl exited immediately (common causes: antivirus or missing admin rights)"
                 )
-                .to_string());
+                .to_string()));
             }
             match Self::local_request("GET", "/api/v0/peers/get_known", None) {
                 Ok((200, _)) => return Ok(AwlHandle { child, job }),
@@ -406,11 +518,7 @@ impl AwlManager {
                         let _ = child.kill();
                         let _ = child.wait();
                         crate::vpn::close_job(job);
-                        return Err(t!(
-                            "awl API 未在时限内就绪",
-                            "awl API did not become ready in time"
-                        )
-                        .to_string());
+                        return Err(SpawnWaitFail::NotReady);
                     }
                     std::thread::sleep(Duration::from_millis(200));
                 }
@@ -563,9 +671,11 @@ impl AwlManager {
         }
         Self::version_check(&exe)?;
         Self::ensure_identity(&exe)?;
+        // IDZ / IDAC（SDDF / SDER / SDGT）：房主单地址 .101，不写 ipNet2（.102）
+        let need_sb = room_host_needs_serverbox_ip(game_id);
         Self::write_config(
             &format!("{HOST_GAME_IP}/24"),
-            Some(&format!("{HOST_SERVERBOX_IP}/24")),
+            need_sb.then(|| format!("{HOST_SERVERBOX_IP}/24")).as_deref(),
             false,
         )?;
         Self::ensure_firewall(&exe);
@@ -584,7 +694,7 @@ impl AwlManager {
                 return Err(e);
             }
         };
-        if !Self::ensure_serverbox_ip() {
+        if need_sb && !Self::ensure_serverbox_ip() {
             // 非致命：.102 没补上时 ServerBox 不可达，但成员仍可连 .101；提示由 UI 层追加
             eprintln!("warn: failed to add serverbox ip {HOST_SERVERBOX_IP}");
         }
@@ -592,8 +702,13 @@ impl AwlManager {
     }
 
     /// 房主回归流程：本 keychip 在目录上已有活跃房间时，跳过开房直接拉起 awl。
-    /// 与首次开房一致：拉起后幂等确保 ServerBox IP .102 在网卡上（兜底）。
-    pub fn host_resume_flow(room_cfg: &RoomConfig) -> Result<AwlHandle, String> {
+    /// 与首次开房一致：拉起后幂等确保 ServerBox IP .102 在网卡上（兜底）；
+    /// IDZ / IDAC（SDDF / SDER / SDGT）房间单地址，不补 .102。
+    /// `game_id` 由调用方按房名从识别库反查（未知游戏按双地址处理）。
+    pub fn host_resume_flow(
+        room_cfg: &RoomConfig,
+        game_id: Option<&str>,
+    ) -> Result<AwlHandle, String> {
         let exe = Self::exe_path(room_cfg);
         if !exe.is_file() {
             return Err(tf!(
@@ -606,14 +721,17 @@ impl AwlManager {
         }
         Self::version_check(&exe)?;
         Self::ensure_identity(&exe)?;
+        let need_sb = game_id.map(room_host_needs_serverbox_ip).unwrap_or(true);
         Self::write_config(
             &format!("{HOST_GAME_IP}/24"),
-            Some(&format!("{HOST_SERVERBOX_IP}/24")),
+            need_sb.then(|| format!("{HOST_SERVERBOX_IP}/24")).as_deref(),
             false,
         )?;
         Self::ensure_firewall(&exe);
         let handle = Self::spawn_awl(&exe)?;
-        let _ = Self::ensure_serverbox_ip();
+        if need_sb {
+            let _ = Self::ensure_serverbox_ip();
+        }
         Ok(handle)
     }
 
@@ -645,5 +763,23 @@ impl AwlManager {
             return Err(e);
         }
         Ok((handle, join))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::room_host_needs_serverbox_ip;
+
+    #[test]
+    fn idz_idac_hosts_single_ip() {
+        // IDZ（SDDF / SDER）与 IDAC（SDGT）：房主单地址，不需要 ServerBox 副地址 .102
+        assert!(!room_host_needs_serverbox_ip("SDDF"));
+        assert!(!room_host_needs_serverbox_ip("SDER"));
+        assert!(!room_host_needs_serverbox_ip("SDGT"));
+        // 其余游戏（IDAS4~8 等，含未知 game_id）：保持双地址
+        assert!(room_host_needs_serverbox_ip("SBZZ"));
+        assert!(room_host_needs_serverbox_ip("SBML"));
+        assert!(room_host_needs_serverbox_ip("SBUU"));
+        assert!(room_host_needs_serverbox_ip(""));
     }
 }

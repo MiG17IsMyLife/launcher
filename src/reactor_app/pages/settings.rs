@@ -459,6 +459,29 @@ impl Launcher {
                 ),
             ));
 
+        // 房间昵称：店内对战成员表「成员」列显示；留空 = 未设置（创建/加入房间时弹窗提示）。
+        // 与服务器地址卡片同模式：输入即时写入 config.ini [room] nickname。
+        let nick_card = Border::new()
+            .horizontal_alignment(HorizontalAlignment::Stretch)
+            .corner_radius(4.0)
+            .background(ThemeBrush::CardBackground)
+            .border_brush(ThemeBrush::CardStroke)
+            .border_thickness(1.0)
+            .content(settings_row(
+                SymbolIcon::new().symbol(Symbol::Contact).into(),
+                t!("房间昵称", "Room nickname"),
+                t!("店内对战房间内显示的昵称（≤24 字符），留空则进房时提示",
+                   "Nickname shown in the room member table (up to 24 chars); blank = prompt on room create/join"),
+                View::from(
+                    TextBox::new()
+                        .width(360.0)
+                        .placeholder_text(t!("例如：player1234", "e.g. player1234"))
+                        .text(self.room.nickname.clone().unwrap_or_default())
+                        .on_text_changed(context.callback(Message::RoomNickChanged))
+                        .vertical_alignment(VerticalAlignment::Center),
+                ),
+            ));
+
         let update_card = Border::new()
             .horizontal_alignment(HorizontalAlignment::Stretch)
             .corner_radius(4.0)
@@ -530,6 +553,7 @@ impl Launcher {
                         title,
                         lang_card,
                         server_card,
+                        nick_card,
                         update_card,
                         components_title,
                         self.loaders_card(context),

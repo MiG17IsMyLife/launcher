@@ -1,9 +1,8 @@
-//! 弹窗渲染与弹窗确认后的入库 / 移除 / 全局路径应用。
+//! 弹窗渲染与弹窗确认后的入库 / 移除等应用。
 use windows_reactor::*;
 
 use crate::detect::FileKind;
 use crate::filedialog;
-use crate::launch;
 use crate::t;
 use crate::tf;
 use crate::storage::{GameRecord, Loader};
@@ -55,35 +54,6 @@ impl Launcher {
                             .text_wrapping(TextWrapping::Wrap),
                     )),
                 )
-                .into(),
-            Dialog::Global { paths } => ContentDialog::new()
-                .title(t!("设置（路径 / 服务器地址，留空为默认）", "Settings (paths / server address; blank = defaults)"))
-                .primary_button_text(t!("确定", "OK"))
-                .close_button_text(t!("取消", "Cancel"))
-                .is_open(true)
-                .on_closed(context.callback(Message::DialogClosed))
-                .content(StackPanel::new().spacing(10.0).children((
-                    TextBlock::new().text("kitten.exe"),
-                    TextBox::new().text(paths[0].clone()).on_text_changed(
-                        context.callback(move |text| Message::GlobalPathChanged(0, text)),
-                    ),
-                    TextBlock::new().text("mice.exe"),
-                    TextBox::new().text(paths[1].clone()).on_text_changed(
-                        context.callback(move |text| Message::GlobalPathChanged(1, text)),
-                    ),
-                    TextBlock::new().text("mice64.exe"),
-                    TextBox::new().text(paths[2].clone()).on_text_changed(
-                        context.callback(move |text| Message::GlobalPathChanged(2, text)),
-                    ),
-                    TextBlock::new().text(t!("inject.exe（segatools / IDAC）", "inject.exe (segatools / IDAC)")),
-                    TextBox::new().text(paths[3].clone()).on_text_changed(
-                        context.callback(move |text| Message::GlobalPathChanged(3, text)),
-                    ),
-                    TextBlock::new().text(t!("服务器地址（默认 sdgt.arcadehub.xyz）", "Server address (default sdgt.arcadehub.xyz)")),
-                    TextBox::new().text(paths[4].clone()).on_text_changed(
-                        context.callback(move |text| Message::GlobalPathChanged(4, text)),
-                    ),
-                )))
                 .into(),
             Dialog::InputCapture { label, .. } => {
                 let remain = self.input_capture_remain.clamp(0.0, 1.0);
@@ -157,6 +127,41 @@ impl Launcher {
                             TextBlock::new()
                                 .text(message.clone())
                                 .opacity(0.8)
+                                .text_wrapping(TextWrapping::Wrap),
+                        )),
+                    )
+                    .into()
+            }
+            Dialog::RoomNickPrompt { pending } => {
+                let (action_hint, default_note) = match pending {
+                    crate::reactor_app::message::PendingRoomAction::Create { .. } => (
+                        t!("创建房间", "create a room"),
+                        t!("跳过后本次将使用默认昵称 player1234", "Skip to use the default nickname player1234 this time"),
+                    ),
+                    crate::reactor_app::message::PendingRoomAction::Join { .. } => (
+                        t!("加入房间", "join a room"),
+                        t!("跳过后本次将使用默认昵称 player1234", "Skip to use the default nickname player1234 this time"),
+                    ),
+                };
+                ContentDialog::new()
+                    .title(t!("未设置昵称", "Nickname not set"))
+                    .primary_button_text(t!("前往设置", "Go to settings"))
+                    .close_button_text(t!("跳过", "Skip"))
+                    .is_open(true)
+                    .on_closed(context.callback(Message::DialogClosed))
+                    .content(
+                        StackPanel::new().spacing(8.0).children((
+                            TextBlock::new()
+                                .text(tf!(
+                                    "尚未设置房间昵称，房间内成员将无法辨认你。要现在前往「设置」页配置后再{0}吗？",
+                                    "No room nickname is set; other players cannot tell who you are. Go to Settings and set one now before you {0}?",
+                                    action_hint
+                                ))
+                                .text_wrapping(TextWrapping::Wrap),
+                            TextBlock::new()
+                                .text(default_note)
+                                .opacity(0.6)
+                                .font_size(12.0)
                                 .text_wrapping(TextWrapping::Wrap),
                         )),
                     )
@@ -246,6 +251,11 @@ impl Launcher {
             Dialog::RoomJoin { room_id, password } => {
                 self.room_start_join(room_id, password, context);
             }
+            Dialog::RoomNickPrompt { .. } => {
+                // 主按钮「前往设置」：转设置页（跳过走 DialogClosed 非主键分支）
+                self.dialog = Dialog::None;
+                self.nav_tag = "settings".to_string();
+            }
             Dialog::Naming { name } => {
                 let name = name.trim().to_string();
                 if name.is_empty() {
@@ -319,25 +329,6 @@ impl Launcher {
                         }
                     }
                 }
-            }
-            Dialog::Global { paths } => {
-                fn opt(s: &str) -> Option<String> {
-                    let t = s.trim();
-                    (!t.is_empty()).then(|| t.to_string())
-                }
-                self.settings.kitten_path = opt(&paths[0]);
-                self.settings.mice_path = opt(&paths[1]);
-                self.settings.mice64_path = opt(&paths[2]);
-                self.settings.segatools_path = opt(&paths[3]);
-                self.store.save_settings(&self.settings);
-                // 服务器地址（第 5 项）：存网络设置（config.ini [network] server）
-                self.net.server = opt(&paths[4]);
-                self.save_net();
-                // 探测线程每轮读取该值，改动即时生效
-                if let Ok(mut h) = self.probe_host.lock() {
-                    *h = self.net.server_host().to_string();
-                }
-                self.detected = launch::detect_loaders();
             }
             _ => {}
         }

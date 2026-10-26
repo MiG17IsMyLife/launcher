@@ -4,10 +4,45 @@
 //! 数据面（awl 的 P2P 连接）与这里完全无关，目录不可达只影响「新加入」。
 
 use serde::Deserialize;
+use std::sync::OnceLock;
 use windows::core::PCWSTR;
 
 use crate::t;
 use crate::tf;
+
+/// 进程级复用的 WinHTTP 会话（OnceLock 懒创建，存裸句柄）：
+/// 同一 session 内 WinHTTP 自动池化底层 TCP/TLS 连接，轮询期间免去每拍一次的
+/// 握手开销。进程生命周期持有、不主动关闭（WinHTTP 进程退出时统一回收）。
+/// 创建失败不缓存，下次请求重试。
+static DIR_SESSION: OnceLock<usize> = OnceLock::new();
+
+/// 取（或首次创建）共享 WinHTTP 会话；接收超时（5s）在会话级一次性设置。
+fn shared_session() -> Result<*mut core::ffi::c_void, String> {
+    use windows::Win32::Networking::WinHttp::{
+        WinHttpOpen, WinHttpSetOption, WINHTTP_ACCESS_TYPE_NO_PROXY, WINHTTP_OPTION_RECEIVE_TIMEOUT,
+    };
+    if let Some(&s) = DIR_SESSION.get() {
+        return Ok(s as *mut core::ffi::c_void);
+    }
+    let session = unsafe {
+        WinHttpOpen(
+            PCWSTR::null(),
+            WINHTTP_ACCESS_TYPE_NO_PROXY,
+            PCWSTR::null(),
+            PCWSTR::null(),
+            0,
+        )
+    };
+    if session.is_null() {
+        return Err(t!("无法初始化网络", "Failed to initialize network").to_string());
+    }
+    unsafe {
+        let timeout_bytes = 5000u32.to_ne_bytes();
+        let _ = WinHttpSetOption(Some(session), WINHTTP_OPTION_RECEIVE_TIMEOUT, Some(&timeout_bytes));
+    }
+    let _ = DIR_SESSION.set(session as usize);
+    Ok(session)
+}
 
 /// 启动器 config.ini [room] 未配置时的默认目录地址。
 pub const DEFAULT_DIRECTORY: &str = "https://dnet.arcadehub.xyz/roomapi";
@@ -119,13 +154,14 @@ impl RoomDirClient {
     /// 发一次请求，返回 (HTTP 状态码, 响应体文本)。
     fn request(&self, verb: &str, path: &str, body: Option<&str>) -> Result<(u16, String), String> {
         use windows::Win32::Networking::WinHttp::{
-            WinHttpCloseHandle, WinHttpConnect, WinHttpOpen, WinHttpOpenRequest,
+            WinHttpCloseHandle, WinHttpConnect, WinHttpOpenRequest,
             WinHttpQueryDataAvailable, WinHttpQueryHeaders, WinHttpReadData, WinHttpReceiveResponse,
             WinHttpSendRequest, WinHttpSetOption, SECURITY_FLAG_IGNORE_CERT_CN_INVALID,
-            WINHTTP_ACCESS_TYPE_NO_PROXY, WINHTTP_FLAG_SECURE, WINHTTP_ADDREQ_FLAG_ADD,
+            WINHTTP_ADDREQ_FLAG_ADD,
+            WINHTTP_FLAG_SECURE,
             WINHTTP_OPEN_REQUEST_FLAGS, WINHTTP_OPTION_REDIRECT_POLICY,
-            WINHTTP_OPTION_REDIRECT_POLICY_ALWAYS, WINHTTP_OPTION_RECEIVE_TIMEOUT,
-            WINHTTP_OPTION_SECURITY_FLAGS, WINHTTP_QUERY_FLAG_NUMBER, WINHTTP_QUERY_STATUS_CODE,
+            WINHTTP_OPTION_REDIRECT_POLICY_ALWAYS, WINHTTP_OPTION_SECURITY_FLAGS,
+            WINHTTP_QUERY_FLAG_NUMBER, WINHTTP_QUERY_STATUS_CODE,
         };
         let url = self.url(path);
         let url_t = url.trim();
@@ -147,26 +183,13 @@ impl RoomDirClient {
         let host = host.to_string();
 
         unsafe {
-            let session = WinHttpOpen(
-                PCWSTR::null(),
-                WINHTTP_ACCESS_TYPE_NO_PROXY,
-                PCWSTR::null(),
-                PCWSTR::null(),
-                0,
-            );
-            if session.is_null() {
-                return Err(t!("无法初始化网络", "Failed to initialize network").to_string());
-            }
-            let cleanup = || {
-                let _ = WinHttpCloseHandle(session);
-            };
-            let timeout_bytes = 5000u32.to_ne_bytes();
-            let _ = WinHttpSetOption(Some(session), WINHTTP_OPTION_RECEIVE_TIMEOUT, Some(&timeout_bytes));
+            // 复用进程级 WinHTTP 会话（TCP/TLS 连接池），失败路径只关 connect/request，
+            // 会话本体跨请求保留。
+            let session = shared_session()?;
 
             let host_w = crate::win_util::to_wide_null(&host);
             let connect = WinHttpConnect(session, PCWSTR::from_raw(host_w.as_ptr()), port, 0);
             if connect.is_null() {
-                cleanup();
                 return Err(tf!("无法连接 {host}", "Cannot connect to {host}").to_string());
             }
             let path_w = crate::win_util::to_wide_null(&path_part);
@@ -183,7 +206,6 @@ impl RoomDirClient {
             );
             if request.is_null() {
                 let _ = WinHttpCloseHandle(connect);
-                cleanup();
                 return Err(t!("无法创建请求", "Failed to create request").to_string());
             }
             let policy: u32 = WINHTTP_OPTION_REDIRECT_POLICY_ALWAYS;
@@ -220,7 +242,6 @@ impl RoomDirClient {
             if let Err(e) = result {
                 let _ = WinHttpCloseHandle(request);
                 let _ = WinHttpCloseHandle(connect);
-                cleanup();
                 return Err(e);
             }
 
@@ -250,7 +271,6 @@ impl RoomDirClient {
             }
             let _ = WinHttpCloseHandle(request);
             let _ = WinHttpCloseHandle(connect);
-            cleanup();
             Ok((status as u16, String::from_utf8_lossy(&body_bytes).to_string()))
         }
     }

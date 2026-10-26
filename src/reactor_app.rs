@@ -108,8 +108,19 @@ pub struct Launcher {
     room_list: Vec<RoomSummary>,
     /// 房间页：房间内成员视图快照（RoomTick 时从 awl API 拉取，供 UI 渲染）
     room_peers: Vec<PeerView>,
+    /// 机位快照：peer_id → 座位 IP（房主=.101；成员=目录分配的座位 IP）。
+    /// RoomTick 时以目录成员表为权威整体重建，供成员表格「机位」列
+    /// 显示机位名（房主 A1 / 成员 A2、B1、B2，按座位 IP 末字节映射）
+    room_seat_ips: HashMap<String, String>,
     /// 本机在房间内的 Game IP（房主=.102，成员=座位 IP；用于 mice 部署覆盖）
     room_my_ip: Option<String>,
+    /// 成员端：本机 peer 是否曾在房主快照的成员表中出现过。
+    /// 被踢判定依据（曾在 → 缺失 = 被移出）：首次加入时房主对账（事件驱动 +
+    /// 60s 节流）可能尚未把新成员纳入广播表，首拍缺自己不算被踢，否则误踢
+    room_saw_self_in_table: bool,
+    /// 昵称未设提示：暂挂的创建/加入动作（延迟一拍再开提示弹窗——
+    /// 立即开会被 WinUI 单 ContentDialog 约束静默拒绝，见 RoomNickPromptReady）
+    room_nick_pending: Option<crate::reactor_app::message::PendingRoomAction>,
     /// 当前房间的游戏（games_db 产品名；状态灯与 mice 部署展示用）
     room_game: String,
     /// 当前房间名（房间内视图标题；成员由目录 join 返回）
@@ -124,6 +135,24 @@ pub struct Launcher {
     room_member_ever_connected: HashSet<String>,
     /// 房主：上次成功上报心跳的时刻（5 分钟节流用；None=尚未发过）
     room_last_heartbeat: Option<Instant>,
+    /// 房主侧成员表长连接同步（Hosting 期间持有；room_stop 时 Drop 停线程）
+    room_host_sync: Option<crate::room_sync::HostSync>,
+    /// 成员侧同步通道（Joined 期间持有）
+    room_member_sync: Option<crate::room_sync::MemberSync>,
+    /// 成员侧已消费的房主快照版本（去重）
+    room_sync_version: u64,
+    /// 成员侧最近一次收到的快照（成员表格「游玩」列渲染用）
+    room_sync_table: Option<crate::room_sync::SyncTable>,
+    /// 未设昵称弹窗「跳过」后的会话内默认昵称（不落盘；优先级低于设置页保存值）
+    room_nick_override: Option<String>,
+    /// 房主侧目录成员表缓存（事件驱动对账的权威快照；None=尚未拉到）
+    room_dir_members: Option<crate::roomdir::MembersInfo>,
+    /// 房主侧上次目录对账时刻（60s 节流）
+    room_last_reconcile: Option<Instant>,
+    /// 本机游玩状态（None=尚未发布/上报过）
+    room_last_playing_report: Option<bool>,
+    /// 成员侧上次状态上报时刻（30s 保活节流用）
+    room_last_status_sent: Option<Instant>,
     /// 房间 loading 覆盖层文案（Some=显示，锁定背景；创建/加入/回归结束后清除）
     room_overlay: Option<String>,
     /// 大厅游戏筛选：ComboBox 选中项（None/Some(0)=全部）
@@ -299,13 +328,25 @@ impl Component for Launcher {
             room_host_down: None,
             room_list: Vec::new(),
             room_peers: Vec::new(),
+            room_seat_ips: HashMap::new(),
             room_my_ip: None,
+            room_saw_self_in_table: false,
+            room_nick_pending: None,
             room_game: String::new(),
             room_name: String::new(),
             room_keychip: String::new(),
             room_member_down: HashMap::new(),
             room_member_ever_connected: HashSet::new(),
             room_last_heartbeat: None,
+            room_host_sync: None,
+            room_member_sync: None,
+            room_sync_version: 0,
+            room_sync_table: None,
+            room_nick_override: None,
+            room_dir_members: None,
+            room_last_reconcile: None,
+            room_last_playing_report: None,
+            room_last_status_sent: None,
             room_overlay: None,
             room_filter_idx: None,
             room_filter_game_id: None,
@@ -549,11 +590,6 @@ Fill in the Keychip serial on the System page first."
             Message::WindowResized(size) => {
                 self.win_size = size;
             }
-            Message::LaunchFromCards => {
-                if let Some(index) = self.cards_game {
-                    self.do_launch(context, index);
-                }
-            }
             Message::RowTestModeToggled(index, on) => {
                 if let Some(g) = self.library.games.get_mut(index) {
                     g.test_mode = Some(on);
@@ -620,32 +656,34 @@ Fill in the Keychip serial on the System page first."
                     };
                 }
             }
-            Message::GlobalPathChanged(slot, value) => {
-                if let Dialog::Global { paths } = &mut self.dialog {
-                    if let Some(p) = paths.get_mut(slot) {
-                        *p = value;
-                    }
-                }
-            }
             Message::DialogClosed(ContentDialogResult::Primary) => self.apply_dialog(context),
             Message::DialogClosed(_) => {
                 // 按键捕获弹窗取消：作废未完成的捕获并关掉倒计时
                 if matches!(self.dialog, Dialog::InputCapture { .. }) {
                     self.end_capture();
                 }
-                self.dialog = Dialog::None;
+                // 未设昵称弹窗「跳过」：本次会话用默认昵称并重放暂挂的创建/加入动作
+                // （主键「前往设置」走 apply_dialog，不进本分支）
+                if let Dialog::RoomNickPrompt { pending } =
+                    std::mem::replace(&mut self.dialog, Dialog::None)
+                {
+                    self.room_nick_override =
+                        Some(crate::reactor_app::pages::room::ROOM_DEFAULT_NICKNAME.to_string());
+                    match pending {
+                        crate::reactor_app::message::PendingRoomAction::Create {
+                            name,
+                            game_idx,
+                            password,
+                        } => self.room_start_host(name, game_idx, password, context),
+                        crate::reactor_app::message::PendingRoomAction::Join {
+                            room_id,
+                            password,
+                        } => self.room_start_join(room_id, password, context),
+                    }
+                } else {
+                    self.dialog = Dialog::None;
+                }
                 self.pending = None;
-            }
-            Message::OpenSettings => {
-                self.dialog = Dialog::Global {
-                    paths: [
-                        self.settings.kitten_path.clone().unwrap_or_default(),
-                        self.settings.mice_path.clone().unwrap_or_default(),
-                        self.settings.mice64_path.clone().unwrap_or_default(),
-                        self.settings.segatools_path.clone().unwrap_or_default(),
-                        self.net.server.clone().unwrap_or_default(),
-                    ],
-                };
             }
             Message::DpiScaleChanged(s) => self.dpi_scale = s,
             Message::CardComposeFailed(summary) => {
@@ -712,6 +750,12 @@ Fill in the Keychip serial on the System page first."
                 if let Ok(mut h) = self.probe_host.lock() {
                     *h = self.net.server_host().to_string();
                 }
+            }
+            Message::RoomNickChanged(text) => {
+                // 昵称截断到 24 字符（按字符数，避免切出半个多字节字符）
+                let t: String = text.trim().chars().take(24).collect();
+                self.room.nickname = if t.is_empty() { None } else { Some(t) };
+                let _ = self.store.save_room(&self.room);
             }
             Message::ServerboxIpChanged(text) => {
                 let t = text.trim().to_string();
@@ -1043,9 +1087,6 @@ Fill in the Keychip serial on the System page first."
                 }
             }
             // ---- 房间（虚拟局域网） ----
-            Message::RoomCreateConfirmed { name, game_idx, password } => {
-                self.room_start_host(name, game_idx, password, context)
-            }
             Message::RoomFilterChanged(sel) => {
                 // ComboBox 首项是「全部游戏」：换算为 games 下标（None = 全部），
                 // room_filter_idx 存换算后的下标，渲染时 +1 回下拉坐标系，两侧一致
@@ -1071,12 +1112,15 @@ Fill in the Keychip serial on the System page first."
                 self.room_overlay = None;
                 self.room_on_created(res, context);
             }
-            Message::RoomJoinConfirmed { room_id, password } => {
-                self.room_start_join(room_id, password, context)
-            }
             Message::RoomJoinResult(res) => {
                 self.room_overlay = None;
                 self.room_on_joined(res, context);
+            }
+            Message::RoomNickPromptReady => {
+                // 延迟一拍后真正打开昵称提示弹窗（见 room_start_host/room_start_join 注释）
+                if let Some(pending) = self.room_nick_pending.take() {
+                    self.dialog = Dialog::RoomNickPrompt { pending };
+                }
             }
             Message::RoomLeaveClicked | Message::RoomCloseClicked => self.room_stop(context),
             Message::RoomLaunchGame => self.room_launch(context, false),
@@ -1106,7 +1150,16 @@ Fill in the Keychip serial on the System page first."
                     // 恢复房主密码（来自落盘的回归记忆），保证重启回归后仍正确显示为私有房间
                     self.room_password = self.room.last_room_password.clone().unwrap_or_default();
                     self.room_members_invited.clear();
-                    self.room_schedule_tick(context);
+                    // 房主回归：重启成员表长连接同步通道
+                    self.room_dir_members = None;
+                    self.room_last_reconcile = None;
+                    self.room_last_playing_report = Some(self.game_running);
+                    let host_sync = crate::room_sync::HostSync::start();
+                    let host_peer = crate::awl::AwlManager::my_peer_id().unwrap_or_default();
+                    let nick = self.room_nickname();
+                    host_sync.publish(&host_peer, &[], self.game_running, Some(&nick));
+                    self.room_host_sync = Some(host_sync);
+                    self.room_schedule_tick(self.room_tick_interval(), context);
                     self.spawn_room_watchdog();
                 }
                     Err(e) => self.dialog = Dialog::Error { message: e },
@@ -1202,6 +1255,16 @@ Fill in the Keychip serial on the System page first."
                 // 立即收起模态覆盖层（进程终止在后台线程执行，不阻塞 UI）
                 if game_running_here && self.launch_overlay == Some(index) {
                     self.launch_overlay = None;
+                }
+                // 启动前添加到本机网卡的 ServerBox 静态 IP：手动「关闭」同样必须回删
+                // （自然退出由 poll_game_exit 负责；本分支 take 走了 game_runtime，
+                //  轮询拿不到 added_static_ip，不在此处回删就会永久残留）。
+                // 单独起后台任务执行 netsh，结果经 StaticIpRemoved 回灌（失败弹窗）。
+                let added_static_ip = rt.as_ref().and_then(|r| r.added_static_ip.clone());
+                if let Some((adapter, ip)) = added_static_ip {
+                    context.spawn_background(move |_| {
+                        Message::StaticIpRemoved(launch::remove_serverbox_static_ip(&adapter, &ip))
+                    });
                 }
                 context.spawn_background(move |_| {
                     if let Some(r) = &rt {

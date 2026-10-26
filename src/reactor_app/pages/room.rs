@@ -1,7 +1,7 @@
 //! 店内对战（房间虚拟局域网）页：大厅视图 + 房间内视图 + 状态机与后台任务。
 //!
 //! - 大厅（Idle）：右上角「创建…/加入…/刷新」，主体为公开房间列表表格；
-//! - 房间内（Hosting/Joined）：房间状态、成员列表、离开/关闭房间按钮；
+//! - 房间内（Hosting/Joined）：房间状态、成员列表（含机位 A1/A2/B1/B2）、离开/关闭房间按钮；
 //! - 单房间约束由状态机保证。
 
 use std::collections::{HashMap, HashSet};
@@ -19,7 +19,7 @@ use crate::tf;
 
 use crate::reactor_app::Launcher;
 use crate::reactor_app::message::{Dialog, Message};
-use crate::reactor_app::widgets::{record_db_match, selectable_text, separator, settings_row};
+use crate::reactor_app::widgets::{record_matches_product, selectable_text, separator, settings_row};
 
 /// 成员侧：房主失联多久后自动退出。
 const HOST_DOWN_TIMEOUT: Duration = Duration::from_secs(10);
@@ -31,8 +31,15 @@ const MEMBER_KICK_AFTER: Duration = Duration::from_secs(10);
 /// 邀请确认 + 拨号）经常超过 10s 掉线宽限——若同用短宽限，首次进房会被房主在
 /// 建链完成前误踢（成员自身建链上限 LINK_TIMEOUT=30s，超过即放弃）。
 const MEMBER_JOIN_GRACE: Duration = Duration::from_secs(90);
-/// 轮询周期。
-const TICK_INTERVAL: Duration = Duration::from_secs(2);
+/// 未设昵称弹窗「跳过」后的会话内默认昵称（不落盘）。
+pub(in crate::reactor_app) const ROOM_DEFAULT_NICKNAME: &str = "player1234";
+/// 房间内本地观测周期。tick 内全部是本机操作（awl 127.0.0.1 API / 收件箱 /
+/// 状态上报），目录请求已事件化——短周期只为快速消费长连接推送与刷新 UI，
+/// 不产生任何外网流量。
+const TICK_INTERVAL_IN_ROOM: Duration = Duration::from_secs(1);
+/// 离开房间页后的观测周期（降频；宽限/失联计时为 Instant 时间基准，
+/// 只影响检测延迟、不影响语义）。
+const TICK_INTERVAL_OFF_PAGE: Duration = Duration::from_secs(15);
 
 impl Launcher {
     pub(in crate::reactor_app) fn dir_client(&self) -> RoomDirClient {
@@ -132,9 +139,10 @@ impl Launcher {
         }
     }
 
-    /// 房间游戏在游戏库中的下标：按「识别库命中产品名 == 房间游戏名」匹配
-    /// （房主开房与成员加入时 room_game 均为识别库产品名；成员侧服务端不下发
-    /// game_id，故统一按名称匹配）。None = 该游戏尚未添加到游戏库。
+    /// 房间游戏在游戏库中的下标：记录须命中同名产品（房主开房与成员加入时
+    /// room_game 均为识别库产品名；成员侧服务端不下发 game_id，故统一按产品名匹配）。
+    /// 命中路径含 CRC 与 ICF（segatools 的 game_id + 版本）两种——后者覆盖识别库里
+    /// 只有 version 没有 crc 的 segatools 条目。None = 该游戏尚未添加到游戏库。
     pub(in crate::reactor_app) fn room_game_index(&self) -> Option<usize> {
         let game = self.room_game.trim();
         if game.is_empty() {
@@ -143,7 +151,39 @@ impl Launcher {
         self.library
             .games
             .iter()
-            .position(|r| record_db_match(r).is_some_and(|m| m.name == game))
+            .position(|r| record_matches_product(r, game))
+    }
+
+    /// 房间游戏是否配置了 ServerBox 程序（None / 空串视为未配置）。
+    ///
+    /// 只用于门控房主的「启动 ServerBox」按钮——未配置时点击只会报
+    /// 「该游戏未配置 ServerBox」。与 ServerBox 地址行无关：地址行按
+    /// 游戏形态（loader）门控，见 room_uses_serverbox。
+    pub(in crate::reactor_app) fn room_has_serverbox(&self) -> bool {
+        let Some(index) = self.room_game_index() else {
+            return false;
+        };
+        self.library
+            .games
+            .get(index)
+            .and_then(|r| r.serverbox.as_deref())
+            .map(str::trim)
+            .is_some_and(|s| !s.is_empty())
+    }
+
+    /// 房间游戏形态是否存在 ServerBox 副地址 .102（与 ServerBox 程序是否
+    /// 配置无关）。
+    ///
+    /// IDAS（kitten / mice）游戏房主恒持有 .102（awl host_flow 写入 ipNet2）；
+    /// IDZ / IDAC 等 segatools 游戏单地址 .101；游戏未入库时保持隐藏。
+    pub(in crate::reactor_app) fn room_uses_serverbox(&self) -> bool {
+        let Some(index) = self.room_game_index() else {
+            return false;
+        };
+        matches!(
+            self.library.games.get(index).map(|r| &r.loader),
+            Some(crate::storage::Loader::Kitten | crate::storage::Loader::Mice)
+        )
     }
 
     /// 房间内直接启动：定位房间游戏后走既有启动链路（房间模式下网络强制
@@ -206,6 +246,17 @@ impl Launcher {
         context.spawn_background(move |_| Message::RoomListRefreshed(dir.list_rooms(filter.as_deref()), overlay));
     }
 
+    /// 生效昵称：设置页保存值优先；未设昵称弹窗「跳过」后的会话默认值次之；均无 = 空。
+    pub(in crate::reactor_app) fn room_nickname(&self) -> String {
+        if let Some(n) = self.room.nickname.as_deref() {
+            let n = n.trim();
+            if !n.is_empty() {
+                return n.to_string();
+            }
+        }
+        self.room_nick_override.clone().unwrap_or_default()
+    }
+
     /// 房主：开房后台任务。`game_idx` = 创建对话框选择的游戏（db::games() 下标）。
     pub(in crate::reactor_app) fn room_start_host(
         &mut self,
@@ -215,6 +266,22 @@ impl Launcher {
         context: &windows_reactor::ComponentContext<Self>,
     ) {
         if self.room_status != RoomStatus::Idle {
+            return;
+        }
+        // 未设昵称：先弹窗（前往设置 / 跳过用默认昵称）。暂挂创建参数并延迟一拍开窗——
+        // 此刻仍处在创建弹窗 on_closed 的消息周期内，WinUI 同一时刻只允许一个
+        // ContentDialog，立即开第二个会被静默拒绝（弹窗不出现 → 创建看似没反应）
+        if self.room_nickname().is_empty() {
+            self.room_nick_pending =
+                Some(crate::reactor_app::message::PendingRoomAction::Create {
+                    name,
+                    game_idx,
+                    password,
+                });
+            context.spawn_background(|_| {
+                std::thread::sleep(std::time::Duration::from_millis(150));
+                Message::RoomNickPromptReady
+            });
             return;
         }
         let name = name.trim().to_string(); // 留空时服务端用房间 ID 作为房间名
@@ -294,7 +361,16 @@ impl Launcher {
                 self.room.last_room_password = Some(self.room_password.clone());
                 let _ = self.store.save_room(&self.room);
                         self.room_members_invited.clear();
-                self.room_schedule_tick(context);
+                // 成员表长连接同步通道（房主权威）：先以空表广播，成员连入即收到
+                self.room_dir_members = None;
+                self.room_last_reconcile = None;
+                self.room_last_playing_report = Some(self.game_running);
+                let host_sync = crate::room_sync::HostSync::start();
+                let host_peer = AwlManager::my_peer_id().unwrap_or_default();
+                let nick = self.room_nickname();
+                host_sync.publish(&host_peer, &[], self.game_running, Some(&nick));
+                self.room_host_sync = Some(host_sync);
+                self.room_schedule_tick(self.room_tick_interval(), context);
                 self.spawn_room_watchdog();
             }
             Err(e) => {
@@ -359,6 +435,20 @@ impl Launcher {
         if self.room_status != RoomStatus::Idle {
             return;
         }
+        // 未设昵称：先弹窗（前往设置 / 跳过用默认昵称）。暂挂加入参数并延迟一拍开窗
+        // （同 room_start_host：避免在加入弹窗 on_closed 周期内开第二个 ContentDialog）
+        if self.room_nickname().is_empty() {
+            self.room_nick_pending =
+                Some(crate::reactor_app::message::PendingRoomAction::Join {
+                    room_id,
+                    password,
+                });
+            context.spawn_background(|_| {
+                std::thread::sleep(std::time::Duration::from_millis(150));
+                Message::RoomNickPromptReady
+            });
+            return;
+        }
         let room_id = room_id.trim().to_uppercase();
         if room_id.is_empty() {
             self.dialog = Dialog::Error {
@@ -405,7 +495,16 @@ impl Launcher {
                 // 旧服务端可能不带 name：回退用房间 ID（房主未填名时本就是 ID）
                 self.room_name = if join.name.is_empty() { room_id } else { join.name };
                 self.room_host_down = None;
-                self.room_schedule_tick(context);
+                // 成员侧同步通道：吃房主长连接快照（无目录兜底轮询）
+                self.room_sync_version = 0;
+                self.room_sync_table = None;
+                self.room_last_playing_report = None;
+                self.room_last_status_sent = None;
+                self.room_member_sync = Some(crate::room_sync::MemberSync::start(
+                    AwlManager::my_peer_id().unwrap_or_default(),
+                    self.room_nickname(),
+                ));
+                self.room_schedule_tick(self.room_tick_interval(), context);
             }
             Err(e) => {
                 self.room_status = RoomStatus::Idle;
@@ -436,11 +535,31 @@ impl Launcher {
         self.room_members_invited.clear();
         self.room_member_down.clear();
         self.room_member_ever_connected.clear();
+        self.room_seat_ips.clear();
         self.room_last_heartbeat = None;
         self.room_host_down = None;
         self.room_my_ip = None;
+        self.room_saw_self_in_table = false;
+        self.room_nick_pending = None;
         self.room_game.clear();
         self.room_name.clear();
+        // 房主关房：先经同步通道广播 close 帧（成员收到立即退出），再释放通道
+        if is_host {
+            if let Some(sync) = self.room_host_sync.as_ref() {
+                sync.notify_close();
+                // 留出广播窗口：连接线程 500ms 轮询内发完 close 帧
+                std::thread::sleep(std::time::Duration::from_millis(600));
+            }
+        }
+        // 同步通道与事件驱动状态一并释放（Drop 停线程）
+        self.room_host_sync = None;
+        self.room_member_sync = None;
+        self.room_sync_version = 0;
+        self.room_sync_table = None;
+        self.room_dir_members = None;
+        self.room_last_reconcile = None;
+        self.room_last_playing_report = None;
+        self.room_last_status_sent = None;
         self.room.last_room_id = None;
         self.room.last_room_password = None;
         let _ = self.store.save_room(&self.room);
@@ -459,14 +578,22 @@ impl Launcher {
             // 关房 / 退出结果不再静默：失败经 RoomFinished 回灌 toast
             // （否则目录上房间残留，还会被「自动回归」重新拉回房间）
             let my = AwlManager::my_peer_id().ok();
+            // 404 = 房间在服务端已不存在（房主早已关闭）：不算操作失败，提示「房间已关闭」
+            let friendly = |e: String| {
+                if e == "HTTP 404" {
+                    t!("房间已关闭", "The room has been closed").to_string()
+                } else {
+                    e
+                }
+            };
             let res = if is_host {
                 dir.close(&room_id, my.as_deref(), &keychip).map_err(|e| {
-                    tf!("关闭房间失败：{}", "Failed to close the room: {}", e)
+                    friendly(tf!("关闭房间失败：{}", "Failed to close the room: {}", e))
                 })
             } else {
                 match my {
                     Some(peer) => dir.leave(&room_id, &peer).map_err(|e| {
-                        tf!("退出房间失败：{}", "Failed to leave the room: {}", e)
+                        friendly(tf!("退出房间失败：{}", "Failed to leave the room: {}", e))
                     }),
                     None => Err(t!("未找到本机 awl 身份，无法退出房间",
                                    "Local awl identity not found; cannot leave the room").to_string()),
@@ -515,13 +642,20 @@ impl Launcher {
             // 优先:房主回归(keychip 名下有活跃房间 → 原房直接拉起)
             if has_keychip {
                 match dir.my_room(&keychip) {
-                    Ok(Some(room)) => match AwlManager::host_resume_flow(&cfg) {
-                        Ok(h) => {
-                            *handle.lock().unwrap() = Some(h);
-                            return Message::RoomResumeResult(Ok(Some(room)));
+                    Ok(Some(room)) => {
+                        // 按房名从识别库反查 game_id：IDZ/IDAC 房间回归时房主同样单地址
+                        let game_id = crate::db::games()
+                            .into_iter()
+                            .find(|g| g.name == room.game)
+                            .and_then(|g| g.game_id);
+                        match AwlManager::host_resume_flow(&cfg, game_id.as_deref()) {
+                            Ok(h) => {
+                                *handle.lock().unwrap() = Some(h);
+                                return Message::RoomResumeResult(Ok(Some(room)));
+                            }
+                            Err(e) => return Message::RoomResumeResult(Err(e)),
                         }
-                        Err(e) => return Message::RoomResumeResult(Err(e)),
-                    },
+                    }
                     Ok(None) => {}
                     Err(e) => return Message::RoomResumeResult(Err(e)),
                 }
@@ -540,8 +674,9 @@ impl Launcher {
         });
     }
 
-    /// 房间轮询心跳：房主=目录成员表 invite；成员=成员表对账（全互联 invite）+
-    /// 房主失联检测；刷新成员快照。
+    /// 房间本地观测拍：房主=事件驱动目录对账（未知 peer/60s 节流）+ 长连接广播
+    /// （成员表+游玩状态）；成员=消费房主快照（全互联 invite/被踢判定）+
+    /// 房主失联检测 + 游玩状态上报。目录请求全部事件化，无周期轮询。
     pub(in crate::reactor_app) fn room_on_tick(
         &mut self,
         context: &windows_reactor::ComponentContext<Self>,
@@ -551,17 +686,38 @@ impl Launcher {
         match self.room_status.clone() {
             RoomStatus::Hosting { room_id, .. } => {
                 let dir = self.dir_client();
-                // 以目录成员为权威：新成员 → invite；已离开成员 → 从展示/邀请集合剔除
-                if let Ok(members) = dir.members(&room_id) {
+                // 事件驱动对账：无缓存 / 本地 awl 出现未知已连 peer / 60s 节流到点
+                // 才拉一次目录成员表；其余拍只做本地观测与广播，目录零流量。
+                let unknown_connected = match &self.room_dir_members {
+                    Some(cache) => {
+                        let known: HashSet<&str> =
+                            cache.members.iter().map(|m| m.peer_id.as_str()).collect();
+                        self.room_peers.iter().any(|p| {
+                            p.connected && p.alias != "host" && !known.contains(p.peer_id.as_str())
+                        })
+                    }
+                    None => true,
+                };
+                let reconcile_due = self
+                    .room_last_reconcile
+                    .map_or(true, |t| t.elapsed() >= Duration::from_secs(60));
+                if unknown_connected || reconcile_due {
+                    self.room_last_reconcile = Some(Instant::now());
+                    match dir.members(&room_id) {
+                        Ok(members) => self.room_dir_members = Some(members),
+                        Err(_) => {} // 目录不可达：维持缓存，节流后重试
+                    }
+                }
+                if let Some(cache) = self.room_dir_members.clone() {
                     let mut ids: HashSet<String> =
-                        members.members.iter().map(|m| m.peer_id.clone()).collect();
-                    ids.insert(members.host_peer_id.clone());
-                    // 成员掉线按「离开房间」处理：awl 断连超过宽限期 → 代成员释放座位
-                    // （等同 leave，幂等），座位即时回收、重入按最低空闲位重新分配。
-                    // 曾建连的成员走短宽限（掉线=断连）；从未建连的新成员走长宽限
-                    //（建链还在进行中，不能按掉线计时，否则首次进房会被误踢）
+                        cache.members.iter().map(|m| m.peer_id.clone()).collect();
+                    ids.insert(cache.host_peer_id.clone());
+                    // 成员掉线按「离开房间」处理（宽限计时为本地 Instant，语义不变）：
+                    // 曾建连的走短宽限（掉线=断连），从未建连的走长宽限（建链进行中）。
+                    // 超限代发一次 leave + 从权威缓存剔除，快照随之广播。
                     let mut down_now: HashMap<String, Instant> = HashMap::new();
-                    for m in &members.members {
+                    let mut kicked = false;
+                    for m in &cache.members {
                         let connected = self
                             .room_peers
                             .iter()
@@ -587,15 +743,21 @@ impl Launcher {
                         if since.elapsed() >= grace {
                             let _ = dir.leave(&room_id, &m.peer_id);
                             ids.remove(&m.peer_id);
-                            // 成员已从房间移除（列表实时反映，无需额外提示）
+                            kicked = true;
                         } else {
                             down_now.insert(m.peer_id.clone(), since);
                         }
                     }
                     self.room_member_down = down_now;
+                    let mut cache = cache;
+                    if kicked {
+                        cache.members.retain(|m| ids.contains(&m.peer_id));
+                        self.room_dir_members = Some(cache.clone());
+                    }
                     // 已不在目录的成员清掉「曾建连」标记：重入按新一次加入重新计时
                     self.room_member_ever_connected.retain(|p| ids.contains(p));
-                    for m in &members.members {
+                    // 新成员 invite（幂等；座位 IP 来自目录权威分配）
+                    for m in &cache.members {
                         if !ids.contains(&m.peer_id) {
                             continue; // 已按掉线移出：不再邀请、不再展示
                         }
@@ -607,77 +769,142 @@ impl Launcher {
                     }
                     self.room_peers.retain(|p| ids.contains(&p.peer_id));
                     self.room_members_invited.retain(|p| ids.contains(p));
+                    // 机位快照整体重建（以目录成员表为权威）：座位 IP → UI「机位」列
+                    self.room_seat_ips = cache
+                        .members
+                        .iter()
+                        .map(|m| (m.peer_id.clone(), m.ip.clone()))
+                        .chain(std::iter::once((
+                            cache.host_peer_id.clone(),
+                            crate::awl::HOST_GAME_IP.to_string(),
+                        )))
+                        .collect();
+                    // 长连接广播：HostSync 内部 diff（成员集/座位/任一游玩状态变化才推）
+                    if let Some(sync) = self.room_host_sync.as_ref() {
+                        let pairs: Vec<(String, String)> = cache
+                            .members
+                            .iter()
+                            .map(|m| (m.peer_id.clone(), m.ip.clone()))
+                            .collect();
+                        let nick = self.room_nickname();
+                        sync.publish(&cache.host_peer_id, &pairs, self.game_running, Some(&nick));
+                    }
                     // 房主保活：每 5 分钟向目录刷新一次 last_heartbeat，
                     // 避免服务端 1h 无保活自动关房（仅目录可达时发，失败忽略）。
-                    if self.room_last_heartbeat.map_or(true, |t| t.elapsed() >= Duration::from_secs(300)) {
+                    if self
+                        .room_last_heartbeat
+                        .map_or(true, |t| t.elapsed() >= Duration::from_secs(300))
+                    {
                         if dir.heartbeat(&room_id, &self.room_keychip).is_ok() {
                             self.room_last_heartbeat = Some(Instant::now());
                         }
                     }
                 }
-                self.room_schedule_tick(context);
+                self.room_schedule_tick(self.room_tick_interval(), context);
             }
-            RoomStatus::Joined { room_id, is_host: false } => {
-                let dir = self.dir_client();
-                // 目录上房间已消失 = 房主已正常关闭 → 立即退出回大厅（不等失联超时）。
-                // 不在房间页时不做退房判定：后台 tick 仍每拍续跑，房间与 awl 进程始终
-                // 保活，回到房间页后判定立即恢复。
-                match dir.members(&room_id) {
-                    Err(crate::roomdir::DirError::NotFound) => {
-                        if self.nav_tag != "room" {
-                            self.room_schedule_tick(context);
-                            return;
-                        }
+            RoomStatus::Joined { room_id: _, is_host: false } => {
+                // 房主已关闭房间（收到 close 帧）→ 立即退出（优先于掉线超时兜底）
+                if let Some(sync) = self.room_member_sync.as_ref() {
+                    if sync.is_closed() {
                         self.room_stop(context);
+                        self.dialog = Dialog::Error {
+                            message: t!(
+                                "房主已关闭房间",
+                                "The host has closed the room"
+                            )
+                            .to_string(),
+                        };
                         return;
                     }
-                    Ok(members) => {
-                        if let Ok(my) = AwlManager::my_peer_id() {
-                            // 掉线后座位已被房主释放（成员表里没有自己）→ 按「离开房间」
-                            // 处理：退出回大厅，重入时按新顺位分配座位（仅房间页判定）
-                            let still_member = my == members.host_peer_id
-                                || members.members.iter().any(|m| m.peer_id == my);
-                            if !still_member && self.nav_tag == "room" {
+                }
+                // 消费房主快照（版本去重）：被踢判定 / 全互联 invite / 成员与机位快照。
+                // 无目录兜底轮询：房主断开 = 房间断开（awl 数据面随房主启动器一起消失）。
+                if let Some(sync) = self.room_member_sync.as_ref() {
+                    if let Some(table) = sync.take_snapshot() {
+                        if table.version != self.room_sync_version {
+                            self.room_sync_version = table.version;
+                            self.room_sync_table = Some(table.clone());
+                            let my = AwlManager::my_peer_id().ok();
+                            let self_in_table = my
+                                .as_deref()
+                                .map(|my| {
+                                    my == table.host_peer_id
+                                        || table.members.iter().any(|m| m.peer_id == my)
+                                })
+                                .unwrap_or(false);
+                            if self_in_table {
+                                self.room_saw_self_in_table = true;
+                            }
+                            // 被踢判定：本机曾在快照成员表中出现过、当前缺失 =
+                            // 房主已移出。首次加入时房主对账（事件驱动 + 60s 节流）
+                            // 可能尚未把新成员纳入广播表，首拍缺自己不算被踢，
+                            // 否则新成员会被误判「你已被移出房间」直接踢出。
+                            if !self_in_table
+                                && self.room_saw_self_in_table
+                                && self.nav_tag == "room"
+                            {
+                                // 掉线后座位已被房主释放（快照里没有自己）→ 退出回大厅，
+                                // 重入时按新顺位分配座位
                                 self.room_stop(context);
+                                self.dialog = Dialog::Error {
+                                    message: t!(
+                                        "你已被移出房间",
+                                        "You have been removed from the room"
+                                    )
+                                    .to_string(),
+                                };
                                 return;
                             }
-                            // 成员全互联对账：把目录里其他成员逐个 invite 进本机 awl
-                            // （对方 autoAccept 自动接受；invite_member 含座位 IP 校正），
-                            // 本机 awl 不再只认识房主，成员列表才能显示全部成员
+                            // invite / 机位快照：本机在表中（或 peer_id 读取失败，保守处理）时执行
+                            let still_member = my.is_none() || self_in_table;
                             if still_member {
-                                for m in &members.members {
-                                    if m.peer_id == my
-                                        || self
-                                            .room_members_invited
-                                            .iter()
-                                            .any(|p| p == &m.peer_id)
-                                    {
-                                        continue;
-                                    }
-                                    if AwlManager::invite_member(&m.peer_id, &m.ip).is_ok() {
-                                        self.room_members_invited.push(m.peer_id.clone());
+                                // 成员全互联对账：把表里其他成员逐个 invite 进本机 awl
+                                // （对方 autoAccept 自动接受；invite_member 含座位 IP 校正）
+                                if let Some(my) = &my {
+                                    for m in &table.members {
+                                        if m.peer_id == *my
+                                            || self
+                                                .room_members_invited
+                                                .iter()
+                                                .any(|p| p == &m.peer_id)
+                                        {
+                                            continue;
+                                        }
+                                        if AwlManager::invite_member(&m.peer_id, &m.ip).is_ok() {
+                                            self.room_members_invited.push(m.peer_id.clone());
+                                        }
                                     }
                                 }
+                                // 以房主快照为权威剔除已离开的成员；保留房主 peer_id；
+                                // invited 集合同步剔除（重入者换新座位，须允许重新 invite 校正 IP）
+                                let mut ids: HashSet<String> =
+                                    table.members.iter().map(|m| m.peer_id.clone()).collect();
+                                ids.insert(table.host_peer_id.clone());
+                                self.room_peers.retain(|p| ids.contains(&p.peer_id));
+                                self.room_members_invited.retain(|p| ids.contains(p));
+                                // 机位快照整体重建（含房主 .101=A1 与全部成员座位 IP）
+                                self.room_seat_ips = table
+                                    .members
+                                    .iter()
+                                    .map(|m| (m.peer_id.clone(), m.ip.clone()))
+                                    .chain(std::iter::once((
+                                        table.host_peer_id.clone(),
+                                        crate::awl::HOST_GAME_IP.to_string(),
+                                    )))
+                                    .collect();
                             }
                         }
-                        // 以目录成员为权威剔除已离开的成员；保留房主 peer_id（别名 "host"）；
-                        // invited 集合同步剔除（重入者换新座位，须允许重新 invite 校正 IP）
-                        let mut ids: HashSet<String> =
-                            members.members.iter().map(|m| m.peer_id.clone()).collect();
-                        ids.insert(members.host_peer_id.clone());
-                        self.room_peers.retain(|p| ids.contains(&p.peer_id));
-                        self.room_members_invited.retain(|p| ids.contains(p));
                     }
-                    Err(_) => { /* 网络等错误：保留现状，下次 tick 再试 */ }
                 }
-                // 兜底：房主失联检测（别名固定为 "host"，见 link_member_to_host）——
-                // 仅房间页生效，理由同上（瞬时抖动不踢人）
+                // 房主失联检测（本地 awl；仅房间页生效）——断开即「房间已断开」，
+                // 不做目录兜底轮询：房主启动器退出会连带杀掉 awl，数据面必然已不可用
                 if self.nav_tag != "room" {
-                    self.room_schedule_tick(context);
+                    self.room_schedule_tick(self.room_tick_interval(), context);
                     return;
                 }
-                let host_connected = AwlManager::known_peers()
-                    .into_iter()
+                let host_connected = self
+                    .room_peers
+                    .iter()
                     .find(|p| p.alias == "host")
                     .map(|p| p.connected)
                     .unwrap_or(false);
@@ -687,10 +914,25 @@ impl Launcher {
                     let since = *self.room_host_down.get_or_insert(Instant::now());
                     if since.elapsed() >= HOST_DOWN_TIMEOUT {
                         self.room_stop(context);
+                        self.dialog = Dialog::Error {
+                            message: t!("房间已断开", "Room disconnected").to_string(),
+                        };
                         return;
                     }
                 }
-                self.room_schedule_tick(context);
+                // 游玩状态上报：变化即发 + 30s 保活（兼作连接活性心跳）
+                let playing = self.game_running;
+                let keepalive_due = self
+                    .room_last_status_sent
+                    .map_or(true, |t| t.elapsed() >= Duration::from_secs(30));
+                if self.room_last_playing_report != Some(playing) || keepalive_due {
+                    if let Some(sync) = self.room_member_sync.as_ref() {
+                        sync.send_status(playing);
+                    }
+                    self.room_last_playing_report = Some(playing);
+                    self.room_last_status_sent = Some(Instant::now());
+                }
+                self.room_schedule_tick(self.room_tick_interval(), context);
             }
             _ => {
                 // 非 Hosting/Joined 状态：不再续拍
@@ -698,9 +940,19 @@ impl Launcher {
         }
     }
 
-    pub(in crate::reactor_app) fn room_schedule_tick(&self, context: &windows_reactor::ComponentContext<Self>) {
+    /// 当前一拍应使用的本地观测间隔（awl API / 收件箱 / 状态上报）：
+    /// 在房间页 5s / 离页 15s；目录请求已事件化，不再轮询、不再退避。
+    pub(in crate::reactor_app) fn room_tick_interval(&self) -> Duration {
+        if self.nav_tag == "room" {
+            TICK_INTERVAL_IN_ROOM
+        } else {
+            TICK_INTERVAL_OFF_PAGE
+        }
+    }
+
+    pub(in crate::reactor_app) fn room_schedule_tick(&self, interval: Duration, context: &windows_reactor::ComponentContext<Self>) {
         context.spawn_background(move |_| {
-            std::thread::sleep(TICK_INTERVAL);
+            std::thread::sleep(interval);
             Message::RoomTick
         });
     }
@@ -708,12 +960,43 @@ impl Launcher {
 
 // ---------- 页面 UI ----------
 
-/// 成员表格行：成员 / 地址 / 状态 / 延迟 / 链路（返回该行的全部单元格）。
+/// 机位名（成员表格「机位」列）：房主 = A1；成员按目录分配的座位 IP 末字节
+/// 映射 A2/B1/B2（成员座位依次 .103/.104/.105，.102 为房主 ServerBox 不占成员位）。
+/// 目录按「最低空闲位」分配并回收座位：某机位离开后座位即时回收，新加入者
+/// 优先补最低空闲位——A2 离开后新玩家先补 A2，其次 B1、B2。
+/// 座位未知（首拍成员表尚未返回 / 别名缺失）时显示 "?"。
+fn seat_label(seat_ip: Option<&str>, alias: &str) -> String {
+    let octet = seat_ip
+        .and_then(|ip| ip.rsplit('.').next().and_then(|s| s.parse::<u8>().ok()))
+        // 兜底：房主邀请时把成员别名写成 "join-{座位末字节}"（见 awl::invite_member）
+        .or_else(|| alias.strip_prefix("join-").and_then(|s| s.parse::<u8>().ok()));
+    match octet.and_then(seat_name_of_octet) {
+        Some(name) => name.to_string(),
+        None => "?".to_string(),
+    }
+}
+
+/// 座位 IP 末字节 → 机位名（房间编址：房主 .101=A1；成员 .103/.104/.105 = A2/B1/B2；
+/// .102 原为房主 ServerBox 不占成员位）。未知末字节返回 None。
+/// 房间模式下启动 segatools 游戏时据此自动设置 dipsw 机位（见 launch.rs）。
+pub(in crate::reactor_app) fn seat_name_of_octet(octet: u8) -> Option<&'static str> {
+    match octet {
+        101 => Some("A1"),
+        103 => Some("A2"),
+        104 => Some("B1"),
+        105 => Some("B2"),
+        _ => None,
+    }
+}
+
+/// 成员表格行：机位 / 成员 / 地址 / 状态 / 游玩 / 延迟 / 链路（返回该行的全部单元格）。
 fn member_cells(
     row: i32,
+    seat: &str,
     alias: &str,
     ip: &str,
     connected: bool,
+    playing_text: String,
     ping_text: String,
     link_text: String,
 ) -> Vec<KeyedView> {
@@ -737,18 +1020,25 @@ fn member_cells(
     vec![
         cell(0, View::from(
             TextBlock::new()
-                .text(alias.to_string())
+                .text(seat.to_string())
+                .font_weight(FontWeight::SEMI_BOLD)
                 .vertical_alignment(VerticalAlignment::Center)
                 .text_trimming(TextTrimming::CharacterEllipsis),
         )),
         cell(1, View::from(
+            TextBlock::new()
+                .text(alias.to_string())
+                .vertical_alignment(VerticalAlignment::Center)
+                .text_trimming(TextTrimming::CharacterEllipsis),
+        )),
+        cell(2, View::from(
             TextBlock::new()
                 .text(ip.to_string())
                 .font_size(12.0)
                 .opacity(0.7)
                 .vertical_alignment(VerticalAlignment::Center),
         )),
-        cell(2, View::from(
+        cell(3, View::from(
             Border::new()
                 .width(11.0)
                 .height(11.0)
@@ -757,14 +1047,20 @@ fn member_cells(
                 .horizontal_alignment(HorizontalAlignment::Left)
                 .vertical_alignment(VerticalAlignment::Center),
         )),
-        cell(3, View::from(
+        cell(4, View::from(
+            TextBlock::new()
+                .text(playing_text)
+                .font_size(12.0)
+                .vertical_alignment(VerticalAlignment::Center),
+        )),
+        cell(5, View::from(
             TextBlock::new()
                 .text(ping_text)
                 .font_size(12.0)
                 .opacity(0.8)
                 .vertical_alignment(VerticalAlignment::Center),
         )),
-        cell(4, View::from(
+        cell(6, View::from(
             TextBlock::new()
                 .text(link_text)
                 .font_size(12.0)
@@ -772,6 +1068,15 @@ fn member_cells(
                 .vertical_alignment(VerticalAlignment::Center),
         )),
     ]
+}
+
+/// 游玩状态文案：Some(状态) → 空闲/游玩中；None（快照未知）→ "—"。
+fn playing_label(playing: Option<bool>) -> String {
+    match playing {
+        Some(true) => t!("游玩中", "Playing").to_string(),
+        Some(false) => t!("空闲", "Idle").to_string(),
+        None => "—".to_string(),
+    }
 }
 
 impl Launcher {
@@ -1054,6 +1359,11 @@ impl Launcher {
         } else {
             room_pw
         };
+        // ServerBox 地址行按游戏形态门控：IDAS（kitten / mice）房主恒有 .102
+        // 副地址；IDAC / IDZ（segatools）单地址 .101。启动按钮另按 ServerBox
+        // 程序配置门控（has_serverbox）。
+        let has_serverbox_addr = self.room_uses_serverbox();
+        let has_serverbox = self.room_has_serverbox();
         // 标题统一用房间名（房主=开房时的名字,成员=join 返回的名字,空名时均为房间 ID）
 
         // 状态灯
@@ -1067,19 +1377,25 @@ impl Launcher {
             _ => (t!("处理中…", "Working…").to_string(), 0x9E, 0x9E, 0x9E),
         };
 
-        // 成员表格：本机排第一，其后为远端成员（单 Grid 共享列宽,严格对齐）
+        // 成员表格：本机排第一，其后为远端成员（单 Grid 共享列宽,严格对齐）。
+        // 机位列：房主 A1，成员按座位 IP 末字节映射 A2/B1/B2（见 seat_label）
+        // 列宽：各列平均分配（等宽 Star）
         let mcols = [
-            GridLength::Star(1.0),
-            GridLength::Star(1.0),
-            GridLength::Star(1.0),
-            GridLength::Star(1.0),
-            GridLength::Star(1.0),
+            GridLength::Star(1.0), // 机位
+            GridLength::Star(1.0), // 成员
+            GridLength::Star(1.0), // 地址
+            GridLength::Star(1.0), // 状态（在线圆点）
+            GridLength::Star(1.0), // 游玩
+            GridLength::Star(1.0), // 延迟
+            GridLength::Star(1.0), // 链路
         ];
         let mut mcells: Vec<KeyedView> = Vec::new();
         let mheaders = [
+            t!("机位", "Seat").to_string(),
             t!("成员", "Member").to_string(),
             t!("地址", "Address").to_string(),
             t!("状态", "Status").to_string(),
+            t!("游玩", "Play").to_string(),
             t!("延迟", "Ping").to_string(),
             t!("链路", "Link").to_string(),
         ];
@@ -1098,12 +1414,13 @@ impl Launcher {
                 ),
             ));
         }
-        let self_role = if is_host {
-            t!("房主（本机）", "Host (this PC)")
-        } else {
-            t!("成员（本机）", "Member (this PC)")
-        };
         let self_ip = self.room_my_ip.clone().unwrap_or_default();
+        // 本机机位：房主恒 A1；成员按目录分配给自己的座位 IP 映射
+        let self_seat = if is_host {
+            "A1".to_string()
+        } else {
+            seat_label(self.room_my_ip.as_deref(), "")
+        };
         // 表头下的全宽分隔线
         mcells.push(KeyedView::new(
             "msep",
@@ -1114,39 +1431,162 @@ impl Launcher {
                     .background(ThemeBrush::CardStroke)
                     .grid_row(1)
                     .grid_column(0)
-                    .grid_column_span(5),
+                    .grid_column_span(7),
             ),
         ));
-        mcells.extend(member_cells(
-            2,
-            &self_role,
-            &self_ip,
-            true,
-            "-".to_string(),
-            t!("本机", "local").to_string(),
-        ));
-        for (i, p) in self.room_peers.iter().enumerate() {
+        // 「游玩」列数据源：房主 = HostSync 聚合的成员上报状态；
+        // 成员 = 最近收到的房主快照（含房主自身状态）。本机行按本地 game_running。
+        let playing_map: HashMap<String, bool> = if is_host {
+            self.room_host_sync
+                .as_ref()
+                .map(|s| s.member_playing())
+                .unwrap_or_default()
+        } else {
+            match &self.room_sync_table {
+                Some(t) => t
+                    .members
+                    .iter()
+                    .map(|m| (m.peer_id.clone(), m.playing))
+                    .chain(std::iter::once((t.host_peer_id.clone(), t.host_playing)))
+                    .collect(),
+                None => HashMap::new(),
+            }
+        };
+        // 本机行「成员」列：昵称 +（本机/房主）标记（昵称缺失回退默认昵称）
+        let self_nick = {
+            let n = self.room_nickname();
+            if n.is_empty() {
+                ROOM_DEFAULT_NICKNAME.to_string()
+            } else {
+                n
+            }
+        };
+        let self_name = if is_host {
+            tf!("{0}（房主·本机）", "{0} (host, this PC)", self_nick)
+        } else {
+            tf!("{0}（本机）", "{0} (this PC)", self_nick)
+        };
+        // 全部行（本机 + 远端）统一按机位 A1→A2→B1→B2 排序后渲染：
+        // 任一端（含成员端）成员表顺序一致，本机行不再固定排第一
+        struct MemberRow {
+            octet: u8,
+            seat: String,
+            name: String,
+            ip: String,
+            connected: bool,
+            playing: String,
+            ping: String,
+            link: String,
+        }
+        let mut rows = vec![MemberRow {
+            octet: self_ip
+                .rsplit('.')
+                .next()
+                .and_then(|s| s.parse::<u8>().ok())
+                .unwrap_or(u8::MAX),
+            seat: self_seat,
+            name: self_name,
+            ip: self_ip,
+            connected: true,
+            playing: playing_label(Some(self.game_running)),
+            ping: "-".to_string(),
+            link: t!("本机", "local").to_string(),
+        }];
+        // 远端成员昵称映射：房主侧取 HostSync 聚合的上报昵称；
+        // 成员侧取最近快照（host_nick + members[].nick）。缺失回退原别名。
+        let nick_map: HashMap<String, String> = if is_host {
+            self.room_host_sync
+                .as_ref()
+                .map(|s| s.member_nick())
+                .unwrap_or_default()
+        } else {
+            match &self.room_sync_table {
+                Some(t) => t
+                    .members
+                    .iter()
+                    .filter_map(|m| m.nick.clone().map(|n| (m.peer_id.clone(), n)))
+                    .chain(
+                        t.host_nick
+                            .clone()
+                            .map(|n| (t.host_peer_id.clone(), n)),
+                    )
+                    .collect(),
+                None => HashMap::new(),
+            }
+        };
+        // 远端行：机位 = 目录成员表座位 IP（缺失兜底解析别名 "join-{末字节}"）；
+        // 排序键 = 座位 IP 末字节（缺失时回退 awl 地址，未知排最后）
+        for p in self.room_peers.iter() {
             let alias = if p.alias.is_empty() { "?" } else { p.alias.as_str() };
+            // 「成员」列：昵称优先（缺失回退别名）；房主行追加（房主）标记
+            let is_host_row = self
+                .room_seat_ips
+                .get(&p.peer_id)
+                .map(|ip| ip.ends_with(".101"))
+                .unwrap_or(false)
+                || alias == "host";
+            let name = match nick_map.get(&p.peer_id) {
+                Some(n) if !n.is_empty() => n.clone(),
+                _ => {
+                    if alias == "host" {
+                        ROOM_DEFAULT_NICKNAME.to_string()
+                    } else {
+                        alias.to_string()
+                    }
+                }
+            };
+            let name = if is_host_row {
+                tf!("{0}（房主）", "{0} (host)", name)
+            } else {
+                name
+            };
             let link = if p.through_relay {
                 t!("中继", "relay").to_string()
             } else {
                 t!("直连", "direct").to_string()
             };
-            mcells.extend(member_cells(
-                (i + 3) as i32,
-                alias,
-                &p.ip,
-                p.connected,
-                format!("{:.0}ms", p.ping_ms),
+            // 机位：优先取目录成员表的座位 IP（RoomTick 重建的机位快照），
+            // 缺失时兜底解析别名 "join-{末字节}"
+            let seat = seat_label(
+                self.room_seat_ips.get(&p.peer_id).map(String::as_str),
+                &p.alias,
+            );
+            let octet = self
+                .room_seat_ips
+                .get(&p.peer_id)
+                .map(String::as_str)
+                .or(Some(p.ip.as_str()))
+                .and_then(|ip| ip.rsplit('.').next().and_then(|s| s.parse::<u8>().ok()));
+            rows.push(MemberRow {
+                octet: octet.unwrap_or(u8::MAX),
+                seat,
+                name,
+                ip: p.ip.clone(),
+                connected: p.connected,
+                playing: playing_label(playing_map.get(&p.peer_id).copied()),
+                ping: format!("{:.0}ms", p.ping_ms),
                 link,
+            });
+        }
+        // 统一按机位 A1→A2→B1→B2 排序（座位 IP 末字节升序；未知排最后）后渲染
+        rows.sort_by_key(|r| r.octet);
+        for (i, r) in rows.iter().enumerate() {
+            mcells.extend(member_cells(
+                (i + 2) as i32,
+                &r.seat,
+                &r.name,
+                &r.ip,
+                r.connected,
+                r.playing.clone(),
+                r.ping.clone(),
+                r.link.clone(),
             ));
         }
-        let members_count = self.room_peers.len() + 1;
+        let members_count = rows.len();
         let mut mrow_defs = vec![GridLength::Auto]; // 表头
         mrow_defs.push(GridLength::Pixel(1.0)); // 分隔线
-        mrow_defs.push(GridLength::Auto); // 本机行
-        for _ in 0..self.room_peers.len() {
-            mrow_defs.push(GridLength::Auto);
+        for _ in 0..rows.len() {
+            mrow_defs.push(GridLength::Auto); // 数据行
         }
         let members_table = Grid::new()
             .columns(mcols)
@@ -1246,27 +1686,41 @@ impl Launcher {
                                     .vertical_alignment(VerticalAlignment::Center),
                             ),
                         ),
-                        separator(),
-                        settings_row(
-                            View::from(SymbolIcon::new().symbol(Symbol::MapDrive)),
-                            t!("ServerBox 地址", "ServerBox address"),
-                            t!("ServerBox 绑定地址，游戏通过它联机（仅房主机持有）", "ServerBox binds this; the game connects via it (host PC only)"),
-                            View::from(
-                                selectable_text(crate::awl::HOST_SERVERBOX_IP.to_string())
-                                    .font_size(16.0)
-                                    .font_weight(FontWeight::SEMI_BOLD)
-                                    .vertical_alignment(VerticalAlignment::Center),
-                            ),
-                        ),
+                        // ServerBox 地址：.102 副地址按游戏形态存在
+                        // （IDAS=kitten / mice 恒有；IDAC / IDZ 无）整行隐藏
+                        if has_serverbox_addr {
+                            separator()
+                        } else {
+                            StackPanel::new().into()
+                        },
+                        if has_serverbox_addr {
+                            settings_row(
+                                View::from(SymbolIcon::new().symbol(Symbol::MapDrive)),
+                                t!("ServerBox 地址", "ServerBox address"),
+                                t!("ServerBox 绑定地址，游戏通过它联机（仅房主机持有）", "ServerBox binds this; the game connects via it (host PC only)"),
+                                View::from(
+                                    selectable_text(crate::awl::HOST_SERVERBOX_IP.to_string())
+                                        .font_size(16.0)
+                                        .font_weight(FontWeight::SEMI_BOLD)
+                                        .vertical_alignment(VerticalAlignment::Center),
+                                ),
+                            )
+                        } else {
+                            StackPanel::new().into()
+                        },
                     )),
             );
 
         // 操作按钮组：启动游戏（房主/成员）+ 启动 ServerBox（仅房主）+ 关闭/离开房间；
         // 游戏 / ServerBox 运行中时对应按钮切换为「关闭」（与游戏页行内按钮同款行为）
         let room_index = self.room_game_index();
-        let game_running_here =
-            self.game_running && self.game_runtime.as_ref().map(|r| r.index) == room_index;
-        let sb_running_here = self.serverbox_runtime.as_ref().map(|r| r.index) == room_index;
+        // 未入库（room_index 为 None）时不能算「本机运行中」——两边都没有运行时会
+        // 出现 None == None，房主侧的 ServerBox 按钮会错显示成「关闭」
+        let game_running_here = self.game_running
+            && room_index.is_some()
+            && self.game_runtime.as_ref().map(|r| r.index) == room_index;
+        let sb_running_here = room_index.is_some()
+            && self.serverbox_runtime.as_ref().map(|r| r.index) == room_index;
         let mut actions: Vec<KeyedView> = Vec::new();
         actions.push(KeyedView::new(
             "launch-game",
@@ -1288,8 +1742,9 @@ impl Launcher {
                 )
             },
         ));
-        // ServerBox 仅房主机持有（.102 只在房主的 awl0 上），成员不显示该按钮
-        if is_host {
+        // ServerBox 仅房主机持有（.102 只在房主的 awl0 上），成员不显示该按钮；
+        // 且须已配置 ServerBox 程序（未配置点击只会报「该游戏未配置 ServerBox」）
+        if is_host && has_serverbox {
             actions.push(KeyedView::new(
                 "launch-serverbox",
                 if sb_running_here {
@@ -1377,5 +1832,22 @@ impl Launcher {
                     )),
             )
             .into()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::seat_name_of_octet;
+
+    #[test]
+    fn seat_name_of_octet_mapping() {
+        // 房间编址：房主 .101=A1；成员 .103/.104/.105 = A2/B1/B2；.102 为 ServerBox 不占成员位
+        assert_eq!(seat_name_of_octet(101), Some("A1"));
+        assert_eq!(seat_name_of_octet(103), Some("A2"));
+        assert_eq!(seat_name_of_octet(104), Some("B1"));
+        assert_eq!(seat_name_of_octet(105), Some("B2"));
+        assert_eq!(seat_name_of_octet(102), None);
+        assert_eq!(seat_name_of_octet(0), None);
+        assert_eq!(seat_name_of_octet(255), None);
     }
 }

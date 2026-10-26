@@ -682,6 +682,9 @@ pub struct RoomConfig {
     pub last_room_id: Option<String>,
     /// 上次房间的密码（私密房回归需要；与 VPN 密码同策略，经 DPAPI 加密存储，旧明文向后兼容）
     pub last_room_password: Option<String>,
+    /// 房间昵称（成员表「成员」列显示；未设置时创建/加入房间会弹窗提示，
+    /// 跳过后本次会话用默认昵称 player1234）。上限 24 字符，保存时已 trim。
+    pub nickname: Option<String>,
 }
 
 /// 从 INI 文件读取房间配置（`[room]` 节）；键缺失或为空均视为未设置。
@@ -692,6 +695,7 @@ fn load_room_from(path: &Path) -> RoomConfig {
         awl_path: read("awl"),
         last_room_id: read("last_room"),
         last_room_password: read("last_password").map(|s| crate::win_util::unprotect_secret(&s)),
+        nickname: read("nickname"),
     }
 }
 
@@ -703,6 +707,7 @@ fn save_room_to(path: &Path, cfg: &RoomConfig) -> io::Result<()> {
     ini::set_value(path, "room", "directory", text(cfg.directory.as_deref()))?;
     ini::set_value(path, "room", "awl", text(cfg.awl_path.as_deref()))?;
     ini::set_value(path, "room", "last_room", text(cfg.last_room_id.as_deref()))?;
+    ini::set_value(path, "room", "nickname", text(cfg.nickname.as_deref()))?;
     ini::set_value(
         path,
         "room",
@@ -1215,6 +1220,32 @@ mod tests {
         // 覆盖为默认：全部键写空回到未设置
         save_input_to(&path, &InputConfig::default()).unwrap();
         assert_eq!(load_input_from(&path), InputConfig::default());
+
+        fs::remove_file(&path).ok();
+    }
+
+    #[test]
+    fn room_config_nickname_roundtrip() {
+        let path = temp_config("room_roundtrip.ini");
+        fs::remove_file(&path).ok();
+
+        // 键缺失 → 全部未设置（含 nickname）
+        assert_eq!(load_room_from(&path), RoomConfig::default());
+
+        // 写入并读回
+        let cfg = RoomConfig {
+            directory: Some("https://dir.example/roomapi".into()),
+            awl_path: Some("C:/tools/awl-tray.exe".into()),
+            last_room_id: Some("ABCD1234".into()),
+            last_room_password: Some("pw".into()),
+            nickname: Some("玩家一号".into()),
+        };
+        save_room_to(&path, &cfg).unwrap();
+        assert_eq!(load_room_from(&path), cfg);
+
+        // 覆盖为默认：全部键写空回到未设置
+        save_room_to(&path, &RoomConfig::default()).unwrap();
+        assert_eq!(load_room_from(&path), RoomConfig::default());
 
         fs::remove_file(&path).ok();
     }

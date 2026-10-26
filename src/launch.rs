@@ -363,6 +363,26 @@ pub fn remove_serverbox_static_ip(friendly: &str, ip: &str) -> Result<(), String
 /// - mice：先把工具与 mice\config.ini（ip = 网段基址+101）/ idas.ini 部署到
 ///   ServerBox 目录，再 `mice.exe -b <ServerBox exe>`（cwd = ServerBox 目录）拉起；
 ///   CMD 窗口隐藏（CREATE_NO_WINDOW）。
+/// ServerBox exe 所在目录（record.serverbox 的父目录）；
+/// 未配置 / 配置为空 / 文件不存在 → None。
+fn serverbox_dir_of(record: &GameRecord) -> Option<PathBuf> {
+    let sb = record
+        .serverbox
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())?;
+    let p = Path::new(sb);
+    if !p.is_file() {
+        return None;
+    }
+    let dir = p.parent().map(PathBuf::from).unwrap_or_else(|| PathBuf::from("."));
+    Some(if dir.as_os_str().is_empty() {
+        PathBuf::from(".")
+    } else {
+        dir
+    })
+}
+
 /// 仅部署 ServerBox（复制工具 + 生成 config.ini / idas.ini），**不拉起进程**。
 /// 供调试用：单独验证文件拷贝 / 配置生成是否正确。
 pub fn deploy_serverbox(
@@ -383,6 +403,26 @@ pub fn deploy_serverbox(
     sb_rec.path = sb_path.to_string();
     // 测试模式只作用于游戏本体，ServerBox 不带 -t
     sb_rec.test_mode = None;
+
+    // 启动 ServerBox：先把 ASI Loader（winmm.dll）+ shaderfix（scripts\）拷进 ServerBox 目录，
+    // 再走各自的加载器部署。开关与游戏本体同一个（gfx_patch，None 视为开启）。
+    // 组件缺失不再静默跳过——明确报错，否则界面上只会看到「勾了图形补丁，目录里什么都没有」。
+    let sb_dir = serverbox_dir_of(&sb_rec).unwrap_or_else(|| PathBuf::from("."));
+    if sb_rec.loader != Loader::Segatools {
+        let enabled = sb_rec.gfx_patch.unwrap_or(true);
+        if enabled {
+            let tools = crate::update::tools_dir();
+            if find_asi_loader(&tools).is_none() {
+                return Err(tf!(
+                    "未安装 Ultimate-ASI-Loader 组件（{}），无法部署图形补丁；请先在设置页更新该组件",
+                    "Ultimate-ASI-Loader is not installed ({}); install it from the Settings page first",
+                    tools.join("asi-loader").join("dinput8.dll").display()
+                ));
+            }
+        }
+        deploy_gfx_patch(&sb_dir, enabled)?;
+    }
+
     match sb_rec.loader {
         Loader::Mice => {
             let Some(DeployConfig::Mice(snapshot)) = dep else {
@@ -392,13 +432,8 @@ pub fn deploy_serverbox(
             let tool_dir = loader.parent().ok_or_else(|| {
                 tf!("无法确定 mice 工具目录：{}", "Cannot determine the mice tool directory: {}", loader.display())
             })?;
-            let sb_dir = Path::new(sb_path)
-                .parent()
-                .map(PathBuf::from)
-                .unwrap_or_else(|| PathBuf::from("."));
             mice::deploy(&sb_dir, tool_dir, snapshot, mice::MiceTarget::ServerBox)?;
-            // IDAS6~8：图形补丁同样部署到 ServerBox 目录
-            deploy_gfx_patch(&sb_dir, sb_rec.gfx_patch.unwrap_or(true))
+            Ok(())
         }
         Loader::Kitten => deploy_only(&sb_rec, settings, detected, dep).map(|_| ()),
         Loader::Segatools => Err(t!("segatools 加载器暂不支持 ServerBox",
@@ -629,10 +664,19 @@ fn copy_file_if_changed(src: &Path, dest: &Path) -> Result<(), String> {
 
 /// 部署 IDAS6~8 的图形补丁到目标目录（幂等）：
 /// - 勾选：`tools/asi-loader/dinput8.dll` → `<dir>\winmm.dll`（改名，DLL 劫持目标），
-///   `tools/asi-loader/` 内其余文件 → `<dir>\scripts\`（加载器从 scripts 加载 .asi 插件）；
+///   `tools/shaderfix/` 内全部文件 → `<dir>\scripts\`（加载器从 scripts 加载 .asi 插件）；
 /// - 未勾选：移除此前部署的 winmm.dll（scripts 内无加载器时插件自然不生效）；
 /// - 组件未安装（toolssi-loader\dinput8.dll 缺失）：静默跳过，不阻断启动。
 pub fn deploy_gfx_patch(dir: &Path, enabled: bool) -> Result<(), String> {
+    deploy_gfx_patch_from(dir, enabled, &crate::update::tools_dir())
+}
+
+/// [`deploy_gfx_patch`] 的可测试内核：`tools` 为组件目录基址（默认 `launcher/tools`）。
+///
+/// 调用方需覆盖**两个**目标目录：游戏目录（record.path 所在目录）与 ServerBox 目录
+/// （record.serverbox 所在目录）——ServerBox 不再随游戏自动拉起，只启动游戏时它的目录
+/// 不会进入 [`deploy_serverbox`]，必须在这里一并部署（见 [`prepare_game`]）。
+fn deploy_gfx_patch_from(dir: &Path, enabled: bool, tools: &Path) -> Result<(), String> {
     let winmm = dir.join("winmm.dll");
     if !enabled {
         if winmm.is_file() {
@@ -640,11 +684,9 @@ pub fn deploy_gfx_patch(dir: &Path, enabled: bool) -> Result<(), String> {
         }
         return Ok(());
     }
-    let tools = crate::update::tools_dir();
 
     // 1) ASI Loader：dinput8.dll → winmm.dll（组件未安装则跳过）
-    let dll = tools.join("asi-loader").join("dinput8.dll");
-    if dll.is_file() {
+    if let Some(dll) = find_asi_loader(tools) {
         copy_file_if_changed(&dll, &winmm)?;
     }
 
@@ -654,6 +696,36 @@ pub fn deploy_gfx_patch(dir: &Path, enabled: bool) -> Result<(), String> {
         copy_files_flat(&sf_dir, &dir.join("scripts"))?;
     }
     Ok(())
+}
+
+/// 定位 ASI Loader 主文件：`tools/asi-loader/dinput8.dll`；
+/// 组件包解压后多一层目录（如 `asi-loader/Ultimate-ASI-Loader-win32/dinput8.dll`）时向下递归找。
+fn find_asi_loader(tools: &Path) -> Option<PathBuf> {
+    let root = tools.join("asi-loader");
+    let direct = root.join("dinput8.dll");
+    if direct.is_file() {
+        return Some(direct);
+    }
+    // 兜底：同名 dll 递归（组件不存在 → None，由调用方决定是否报错）
+    find_file_recursive(&root, "dinput8.dll")
+}
+
+/// 在 `dir` 下递归查找文件名为 `name` 的第一个文件。
+fn find_file_recursive(dir: &Path, name: &str) -> Option<PathBuf> {
+    if !dir.is_dir() {
+        return None;
+    }
+    for entry in fs::read_dir(dir).ok()?.flatten() {
+        let p = entry.path();
+        if p.is_dir() {
+            if let Some(found) = find_file_recursive(&p, name) {
+                return Some(found);
+            }
+        } else if entry.file_name().to_string_lossy().eq_ignore_ascii_case(name) {
+            return Some(p);
+        }
+    }
+    None
 }
 
 /// 递归收集 `src` 下全部文件并**展平**复制到 `dest`（目录结构不保留，重名覆盖）。
@@ -710,10 +782,19 @@ pub fn prepare_game(
     let _ = initiald_patch(record, &game_dir, host);
 
     // IDAS6~8（mice）：图形补丁（winmm.dll + scripts\），勾选才部署；
-    // 未勾选时 deploy_gfx_patch 移除游戏目录内的 winmm.dll。
+    // 未勾选时 deploy_gfx_patch 移除目录内的 winmm.dll。
     // kitten 不部署该补丁（无 gfx_patch 概念），不要往 kitten 游戏目录拷 ASI Loader。
     if record.loader == Loader::Mice {
-        deploy_gfx_patch(&game_dir, record.gfx_patch.unwrap_or(true))?;
+        let enabled = record.gfx_patch.unwrap_or(true);
+        deploy_gfx_patch(&game_dir, enabled)?;
+
+        // ServerBox 目录同样部署：ServerBox 不再随游戏自动拉起（需在该游戏行手动「启动」），
+        // 只启动游戏时它的目录不会进入 deploy_serverbox，图形补丁会一直缺位。
+        // 容错：ServerBox 正在运行时 winmm.dll 被进程占用、或目录不可写，
+        // 都不应阻断游戏启动（与上面 initiald_patch 的容错口径一致）。
+        if let Some(sb_dir) = serverbox_dir_of(record) {
+            let _ = deploy_gfx_patch(&sb_dir, enabled);
+        }
     }
 
     Ok(exe)
@@ -1045,5 +1126,141 @@ mod tests {
         assert!(files_equal(&a.join("f"), &b.join("f")));
         cleanup(&a);
         cleanup(&b);
+    }
+
+    /// 仅带 serverbox 字段的游戏记录（其余字段不影响目录推导）。
+    fn record_with_serverbox(serverbox: Option<String>) -> GameRecord {
+        GameRecord {
+            id: "gfx".to_string(),
+            path: String::new(),
+            name: "gfx".to_string(),
+            crc: None,
+            version: None,
+            arch: None,
+            loader: Loader::Mice,
+            platform: None,
+            image: None,
+            cover: None,
+            serverbox,
+            reader: None,
+            amdaemon: None,
+            game_exe: None,
+            game_id: None,
+            gfx_patch: None,
+            test_mode: None,
+            card: None,
+            play_count: 0,
+            last_played: None,
+            added_at: 0,
+        }
+    }
+
+    /// 组件齐全的 tools 目录：asi-loader/dinput8.dll + shaderfix/{shaderfix.asi, plugins/extra.asi}
+    fn tools_with_gfx(name: &str) -> PathBuf {
+        let tools = tmp(name);
+        fs::create_dir_all(tools.join("asi-loader")).unwrap();
+        write(&tools.join("asi-loader/dinput8.dll"), b"loader");
+        fs::create_dir_all(tools.join("shaderfix/plugins")).unwrap();
+        write(&tools.join("shaderfix/shaderfix.asi"), b"asi");
+        write(&tools.join("shaderfix/plugins/extra.asi"), b"extra");
+        tools
+    }
+
+    #[test]
+    fn gfx_patch_deploys_loader_and_shaderfix() {
+        let dir = tmp("gfx_dir");
+        let tools = tools_with_gfx("gfx_tools");
+        deploy_gfx_patch_from(&dir, true, &tools).unwrap();
+        assert_eq!(fs::read(dir.join("winmm.dll")).unwrap(), b"loader".to_vec());
+        assert_eq!(
+            fs::read(dir.join("scripts/shaderfix.asi")).unwrap(),
+            b"asi".to_vec()
+        );
+        // 子目录内文件展平到 scripts\
+        assert_eq!(
+            fs::read(dir.join("scripts/extra.asi")).unwrap(),
+            b"extra".to_vec()
+        );
+        cleanup(&dir);
+        cleanup(&tools);
+    }
+
+    #[test]
+    fn gfx_patch_disabled_removes_winmm() {
+        let dir = tmp("gfx_off_dir");
+        let tools = tools_with_gfx("gfx_off_tools");
+        write(&dir.join("winmm.dll"), b"old");
+        deploy_gfx_patch_from(&dir, false, &tools).unwrap();
+        assert!(!dir.join("winmm.dll").is_file(), "未勾选应移除 winmm.dll");
+        cleanup(&dir);
+        cleanup(&tools);
+    }
+
+    #[test]
+    fn gfx_patch_missing_components_is_noop() {
+        let dir = tmp("gfx_empty_dir");
+        let tools = tmp("gfx_empty_tools"); // 无 asi-loader / shaderfix
+        deploy_gfx_patch_from(&dir, true, &tools).unwrap();
+        assert!(!dir.join("winmm.dll").exists());
+        assert!(!dir.join("scripts").exists());
+        cleanup(&dir);
+        cleanup(&tools);
+    }
+
+    #[test]
+    fn gfx_patch_covers_game_and_serverbox_dirs() {
+        // ServerBox 不再随游戏自动拉起：只启动游戏时也必须把它所在目录部署到位
+        let game = tmp("gfx_game");
+        let sb = tmp("gfx_sb");
+        let tools = tools_with_gfx("gfx_both_tools");
+        write(&sb.join("serverbox.exe"), b"sb");
+        let rec = record_with_serverbox(Some(
+            sb.join("serverbox.exe").to_string_lossy().into_owned(),
+        ));
+        let sb_dir = serverbox_dir_of(&rec).expect("已配置的 ServerBox 应解析出目录");
+        for dir in [&game, &sb_dir] {
+            deploy_gfx_patch_from(dir, true, &tools).unwrap();
+            assert!(dir.join("winmm.dll").is_file(), "{} 应有 winmm.dll", dir.display());
+            assert!(dir.join("scripts/shaderfix.asi").is_file());
+        }
+        cleanup(&game);
+        cleanup(&sb);
+        cleanup(&tools);
+    }
+
+    #[test]
+    fn gfx_patch_finds_loader_in_nested_dir() {
+        // 组件包解压多一层目录时也必须拷到（否则界面上表现为「勾了却没拷」）
+        let dir = tmp("gfx_nested_dir");
+        let tools = tmp("gfx_nested_tools");
+        fs::create_dir_all(tools.join("asi-loader/Ultimate-ASI-Loader-win32")).unwrap();
+        write(
+            &tools.join("asi-loader/Ultimate-ASI-Loader-win32/dinput8.dll"),
+            b"loader",
+        );
+        deploy_gfx_patch_from(&dir, true, &tools).unwrap();
+        assert_eq!(fs::read(dir.join("winmm.dll")).unwrap(), b"loader".to_vec());
+        cleanup(&dir);
+        cleanup(&tools);
+    }
+
+    #[test]
+    fn serverbox_dir_of_variants() {
+        // 未配置 / 空串 / 纯空白 → None
+        assert!(serverbox_dir_of(&record_with_serverbox(None)).is_none());
+        assert!(serverbox_dir_of(&record_with_serverbox(Some(String::new()))).is_none());
+        assert!(serverbox_dir_of(&record_with_serverbox(Some("  ".to_string()))).is_none());
+        let sb = tmp("sb_variants");
+        // 文件不存在 → None
+        let missing = sb.join("nope.exe").to_string_lossy().into_owned();
+        assert!(serverbox_dir_of(&record_with_serverbox(Some(missing))).is_none());
+        // 文件存在 → 取其父目录
+        write(&sb.join("serverbox.exe"), b"sb");
+        let ok = sb.join("serverbox.exe").to_string_lossy().into_owned();
+        assert_eq!(
+            serverbox_dir_of(&record_with_serverbox(Some(ok))),
+            Some(sb.clone())
+        );
+        cleanup(&sb);
     }
 }

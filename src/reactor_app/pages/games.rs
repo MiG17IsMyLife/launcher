@@ -334,8 +334,8 @@ impl Launcher {
                             SymbolIcon::new().symbol(Symbol::Repair).into(),
                             t!("图形补丁", "Graphics patch"),
                             t!(
-                                "启动时部署 ASI Loader 与 shaderfix 插件到游戏目录",
-                                "Deploys the ASI Loader and shaderfix plugin at launch"
+                                "启动时部署 ASI Loader 与 shaderfix 插件到游戏目录与 ServerBox 目录",
+                                "Deploys the ASI Loader and shaderfix plugin to the game and ServerBox directories"
                             ),
                             settings_toggle(
                                 game.gfx_patch.unwrap_or(true),

@@ -18,6 +18,7 @@ mod netinfo;
 mod rawinput;
 mod reactor_app;
 mod roomdir;
+mod room_sync;
 mod segatools;
 mod server;
 mod storage;

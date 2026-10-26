@@ -45,6 +45,37 @@ pub(super) fn record_db_match(game: &GameRecord) -> Option<db::DbMatch> {
     db::lookup(crc, game.loader)
 }
 
+/// 记录是否属于识别库中名为 `product` 的产品（`product` 为已 trim 的非空产品名）。
+///
+/// 两条判定路径，按序优先：
+/// 1. **CRC 命中**（[`record_db_match`]）：kitten / mice 等带 CRC 的构建；
+/// 2. **game_id + 版本命中**（`db::lookup_by_game_id`）：segatools 游戏走 ICF 识别
+///    入库（`crc` 为 None），而识别库里 segatools 条目只有 `version` 没有 `crc`，
+///    只能拿 ICF 解析出的 id + 版本反查产品名。缺这两项时回退按记录名比较。
+pub(super) fn record_matches_product(game: &GameRecord, product: &str) -> bool {
+    if product.is_empty() {
+        return false;
+    }
+    if let Some(m) = record_db_match(game) {
+        return m.name == product;
+    }
+    let id = game
+        .game_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty());
+    let version = game
+        .version
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty());
+    match (id, version) {
+        (Some(id), Some(v)) => db::lookup_by_game_id(id, v).is_some_and(|m| m.name == product),
+        // 手动添加的未知游戏：没有 id / 版本，只能按记录名（= 入库时填的名字）兜底
+        _ => game.name.trim() == product,
+    }
+}
+
 pub(super) fn row_placeholder(name: &str) -> View {
     let ch: String = name.chars().take(3).collect();
     Border::new()
@@ -167,6 +198,75 @@ pub(super) fn settings_toggle<C: IntoPayloadCallback<bool>>(on: bool, enabled: b
                 ]),
         ))
         .into()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::storage::Loader;
+
+    /// 测试用游戏记录：只填参与产品匹配的字段，其余给默认值。
+    fn record(loader: Loader, crc: Option<&str>, game_id: Option<&str>, version: Option<&str>, name: &str) -> GameRecord {
+        GameRecord {
+            id: "t".into(),
+            path: "C:/game".into(),
+            name: name.into(),
+            crc: crc.map(Into::into),
+            version: version.map(Into::into),
+            arch: None,
+            loader,
+            platform: None,
+            image: None,
+            cover: None,
+            serverbox: None,
+            reader: None,
+            amdaemon: None,
+            game_exe: None,
+            game_id: game_id.map(Into::into),
+            gfx_patch: None,
+            test_mode: None,
+            card: None,
+            play_count: 0,
+            last_played: None,
+            added_at: 0,
+        }
+    }
+
+    #[test]
+    fn crc_records_match_by_lookup() {
+        // mice（D8 JPN 2.01）：CRC 命中产品
+        let r = record(Loader::Mice, Some("0x1fd6136a"), Some("SBZZ"), Some("2.01"), "InitialD Arcade Stage 8 JPN");
+        assert!(record_matches_product(&r, "InitialD Arcade Stage 8 JPN"));
+        assert!(!record_matches_product(&r, "InitialD Arcade Stage 8 EXP"));
+        assert!(!record_matches_product(&r, ""), "空产品名不匹配");
+    }
+
+    #[test]
+    fn icf_segatools_records_match_by_game_id_and_version() {
+        // segatools（ICF 入库）：无 CRC，靠 game_id + 版本反查产品
+        // SDGT 3.21.00 → Season 5；2.80.00 → Season 4（同 id 不同版本须能区分）
+        let s5 = record(Loader::Segatools, None, Some("SDGT"), Some("3.21.00"), "InitialD The Arcade Season 5");
+        let s4 = record(Loader::Segatools, None, Some("SDGT"), Some("2.80.00"), "InitialD The Arcade Season 4");
+        assert!(record_matches_product(&s5, "InitialD The Arcade Season 5"));
+        assert!(!record_matches_product(&s5, "InitialD The Arcade Season 4"));
+        assert!(record_matches_product(&s4, "InitialD The Arcade Season 4"));
+        assert!(!record_matches_product(&s4, "InitialD The Arcade Season 5"));
+
+        // IDZ：SDDF 1.30.00（Zero）与 2.31.00（Zero Ver.2）
+        let z = record(Loader::Segatools, None, Some("SDDF"), Some("1.30.00"), "InitialD Arcade Stage Zero");
+        let z2 = record(Loader::Segatools, None, Some("SDDF"), Some("2.31.00"), "InitialD Arcade Stage Zero Ver.2");
+        assert!(record_matches_product(&z, "InitialD Arcade Stage Zero"));
+        assert!(record_matches_product(&z2, "InitialD Arcade Stage Zero Ver.2"));
+        assert!(!record_matches_product(&z2, "InitialD Arcade Stage Zero"));
+    }
+
+    #[test]
+    fn manual_records_fall_back_to_name() {
+        // 未命中识别库、手动命名的记录：按记录名兜底
+        let r = record(Loader::Mice, Some("0xdeadbeef"), None, None, "My Game");
+        assert!(record_matches_product(&r, "My Game"));
+        assert!(!record_matches_product(&r, "Other"));
+    }
 }
 
 /// 卡片内两行之间的 1px 分隔线

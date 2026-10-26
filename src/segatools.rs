@@ -42,7 +42,9 @@
 //! | `[dinput]` | 设备 / 轴 / 按键 / 挡位，与 mice idas.ini 同映射 |
 //! | `[ffb] enable` | FFB 板模拟开关（1/0） |
 //! | `[dinput] constantForceStrength / damperStrength / rumbleStrength / rumbleDuration / baseDamperFraction / deadband` | 输入设置 ffb_* 六项（仅 dinput 模式写入） |
-//! | `[aimeio] / [idacio] / [pcbid] / [graphics]` | 不写（内置 IO / 默认 / UE4 自管） |
+//! | `[pcbid] serialNo` | IDZ：`ACAE01A` + 8 位随机数字（每次启动重新生成，不持久化） |
+//! | `[ds] serialNO` | IDZ：`AAVE-01A` + 8 位随机数字（每次启动重新生成，不持久化） |
+//! | `[aimeio] / [idacio] / [graphics]` | 不写（内置 IO / 默认 / UE4 自管） |
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -98,12 +100,50 @@ pub fn game_kind(game_id: Option<&str>) -> GameKind {
     }
 }
 
+/// IDZ 系列 ServerBox 映像名（游戏退出后按映像名强杀）：
+/// SDER → CHN 版；SDDF / 其他 → Nu 版。
+pub fn idz_serverbox_image(game_id: Option<&str>) -> &'static str {
+    match game_id {
+        Some("SDER") => "ServerBoxD8_Nu_x64_CHN.exe",
+        _ => "ServerBoxD8_Nu_x64.exe",
+    }
+}
+
 /// inject 注入用的 hook dll（需与 cwd 同目录）。
 fn hook_dll(kind: GameKind) -> &'static str {
     match kind {
         GameKind::Idz => "idzhook.dll",
         GameKind::Idac => "idachook.dll",
     }
+}
+
+/// 生成 `n` 位随机 ASCII 数字串。随机源 = 时间纳秒 ^ 进程 id 做种子的轻量 LCG
+/// （非密码学场景，不引入 rand 依赖）。
+fn random_digits(n: usize) -> String {
+    let mut seed = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_nanos() as u64)
+        .unwrap_or(0x9E37_79B9_7F4A_7C15)
+        ^ ((std::process::id() as u64) << 32);
+    let mut next = move || {
+        seed = seed
+            .wrapping_mul(6364136223846793005)
+            .wrapping_add(1442695040888963407);
+        (seed >> 33) as u32
+    };
+    (0..n)
+        .map(|_| char::from(b'0' + (next() % 10) as u8))
+        .collect()
+}
+
+/// `[pcbid] serialNo` 生成：固定前缀 `ACAE01A` + 8 位随机数字（共 15 字符）。
+pub fn pcbid_serial_random() -> String {
+    format!("ACAE01A{}", random_digits(8))
+}
+
+/// `[ds] serialNO` 生成：固定前缀 `AAVE-01A`（含连字符）+ 8 位随机数字（共 16 字符）。
+pub fn ds_serial_random() -> String {
+    format!("AAVE-01A{}", random_digits(8))
 }
 
 // ---------------------------------------------------------------------------
@@ -166,9 +206,23 @@ pub fn spike_file(tool_dir: &Path, version: Option<&str>) -> Option<String> {
         .then_some(name)
 }
 
-/// 按启动器全局设置快照渲染 segatools.ini 文本。
-/// `spike` 为版本命中的补丁文件名（见 [`spike_file`]，仅 IDAC），None 则不写 `spike` 键。
+/// 按启动器全局设置快照渲染 segatools.ini 文本（不写 `[pcbid]` / `[ds] serialNO`）。
+/// 仅测试用便捷包装；生产路径 [`deploy`] 走 [`render_segatools_ini_with_pcbid`]。
+#[cfg(test)]
 pub fn render_segatools_ini(dep: &DeploySnapshot, spike: Option<&str>) -> String {
+    render_segatools_ini_with_pcbid(dep, spike, None, None)
+}
+
+/// [`render_segatools_ini`] 的带随机 serial 版本：`pcbid_serial`（`ACAE01A` + 8 位随机数字，
+/// 见 [`pcbid_serial_random`]）写 `[pcbid]`，`ds_serial`（`AAVE-01A` + 8 位随机数字，
+/// 见 [`ds_serial_random`]）写 `[ds] serialNO`——均仅 IDZ（SDDF / SDER）形态写入；
+/// 随机值在 `deploy()` 层生成后传入，保持本函数纯函数性质（可单测）。
+pub fn render_segatools_ini_with_pcbid(
+    dep: &DeploySnapshot,
+    spike: Option<&str>,
+    pcbid_serial: Option<&str>,
+    ds_serial: Option<&str>,
+) -> String {
     let kind = game_kind(dep.game_id.as_deref());
     let mut s = Sections::new();
 
@@ -198,9 +252,38 @@ pub fn render_segatools_ini(dep: &DeploySnapshot, spike: Option<&str>) -> String
     // router 固定 10.0.0.254（segatools 的 DNS 网关占位，与模拟网段配套）
     s.push("dns", "router", "10.0.0.254");
     s.push("netenv", "enable", "1");
-    // IDZ（SDDF / SDER）：网卡序号后缀
+    // IDZ（SDDF / SDER）：[netenv] addrSuffix = 主机 IP 末字节——
+    // 房间模式取本机房间 Game IP（房主 .101 / 成员座位 .103/.104/.105），
+    // 非房间取网络设置的主机 IP；主机 IP 未配置时不写
     if kind == GameKind::Idz {
-        s.push("network", "addrSuffix", "12");
+        let suffix_ip = dep
+            .room
+            .as_ref()
+            .map(|r| {
+                r.my_game_ip
+                    .clone()
+                    .unwrap_or_else(|| crate::awl::HOST_GAME_IP.to_string())
+            })
+            .or_else(|| {
+                dep.net
+                    .host_ip
+                    .as_deref()
+                    .map(str::trim)
+                    .filter(|s| !s.is_empty())
+                    .map(str::to_string)
+            });
+        if let Some(suffix) =
+            suffix_ip.and_then(|ip| ip.rsplit('.').next().and_then(|s| s.parse::<u8>().ok()))
+        {
+            s.push("netenv", "addrSuffix", &suffix.to_string());
+        }
+    }
+
+    // ---- [pcbid]：仅 IDZ——serialNo = ACAE01A + 9 位随机数字（每次启动重新生成） ----
+    if kind == GameKind::Idz {
+        if let Some(sn) = pcbid_serial {
+            s.push("pcbid", "serialNo", sn);
+        }
     }
 
     // ---- [keychip]：序列号 / 网段 / gameId；region：IDZ 在 [ds]，IDAC 在 [keychip] ----
@@ -238,6 +321,12 @@ pub fn render_segatools_ini(dep: &DeploySnapshot, spike: Option<&str>) -> String
         match kind {
             GameKind::Idz => s.push("ds", "region", r),
             GameKind::Idac => s.push("keychip", "region", r),
+        }
+    }
+    // ---- [ds] serialNO：仅 IDZ——AAVE-01A + 8 位随机数字（每次启动重新生成） ----
+    if kind == GameKind::Idz {
+        if let Some(sn) = ds_serial {
+            s.push("ds", "serialNO", sn);
         }
     }
 
@@ -708,8 +797,21 @@ pub fn deploy(dir: &Path, tool_dir: &Path, dep: &DeploySnapshot) -> Result<(), S
         copy_if_changed(&hook_json, &dir.join("config_hook.json"))?;
     }
 
-    // 3) 生成的 segatools.ini
-    write_atomic(&dir.join("segatools.ini"), &render_segatools_ini(dep, spike.as_deref()))?;
+    // 3) 生成的 segatools.ini（IDZ：[pcbid] serialNo = ACAE01A + 8 位随机数字、
+    //    [ds] serialNO = AAVE-01A + 8 位随机数字，均每次启动重新生成）
+    let (pcbid, ds_serial) = match kind {
+        GameKind::Idz => (Some(pcbid_serial_random()), Some(ds_serial_random())),
+        GameKind::Idac => (None, None),
+    };
+    write_atomic(
+        &dir.join("segatools.ini"),
+        &render_segatools_ini_with_pcbid(
+            dep,
+            spike.as_deref(),
+            pcbid.as_deref(),
+            ds_serial.as_deref(),
+        ),
+    )?;
 
     // 4) option / appdata 目录（segatools 对 [vfs] 各路径要求存在，缺失会 FATAL）+
     //    spike 补丁文件
@@ -982,7 +1084,8 @@ mod tests {
         assert!(text.contains("felicaGen = 0"));
         assert!(text.contains("aimeGen = 1"));
         assert!(text.contains(r"aimePath = DEVICE\aime.txt"), "未选卡回退默认");
-        assert!(text.contains("[network]\naddrSuffix = 12"), "IDZ 带 addrSuffix");
+        assert!(text.contains("[netenv]\nenable = 1"), "IDZ 写 netenv 开关：\n{text}");
+        assert!(!text.contains("addrSuffix"), "主机 IP 未配置时不写 addrSuffix：\n{text}");
         assert!(text.contains("[io3]"), "IDZ 输入段为 io3");
         assert!(text.contains("[gfx]
 enable = 0"), "IDZ 图形钩子默认关闭");
@@ -1061,6 +1164,47 @@ enable = 0"), "IDZ 图形钩子默认关闭");
             text.contains("[gfx]\nenable = 1\nwidth = 1920\nheight = 1080"),
             "分辨率异常应回退默认宽高：\n{text}"
         );
+    }
+
+    #[test]
+    fn idz_ini_addr_suffix_follows_room_ip() {
+        // IDZ 房间模式：addrSuffix = 本机房间 Game IP 末字节
+        // 成员 .103 → 103
+        let mut dep = snapshot();
+        dep.game_id = Some("SDDF".into());
+        dep.room = Some(RoomNetOverride {
+            cidr: crate::awl::ROOM_CIDR.to_string(),
+            my_game_ip: Some("172.10.1.103".into()),
+            server_ip: crate::awl::HOST_SERVERBOX_IP.to_string(),
+        });
+        let text = render_segatools_ini(&dep, None);
+        assert!(text.contains("[netenv]\nenable = 1\naddrSuffix = 103"), "成员 .103 应为 103：\n{text}");
+
+        // 房主（my_game_ip None → 房主 Game IP .101）→ 101
+        dep.room = Some(RoomNetOverride {
+            cidr: crate::awl::ROOM_CIDR.to_string(),
+            my_game_ip: None,
+            server_ip: crate::awl::HOST_SERVERBOX_IP.to_string(),
+        });
+        let text = render_segatools_ini(&dep, None);
+        assert!(text.contains("[netenv]\nenable = 1\naddrSuffix = 101"), "房主 .101 应为 101：\n{text}");
+
+        // 非 IDZ（IDAC）房间模式不写 addrSuffix
+        dep.game_id = Some("SDGT".into());
+        let text = render_segatools_ini(&dep, None);
+        assert!(!text.contains("addrSuffix"), "IDAC 不写 addrSuffix：\n{text}");
+
+        // IDZ 非房间模式：addrSuffix = 网络设置主机 IP 末字节（192.168.100.50 → 50）
+        let mut dep = snapshot();
+        dep.game_id = Some("SDDF".into());
+        dep.net.host_ip = Some("  192.168.100.50  ".into());
+        let text = render_segatools_ini(&dep, None);
+        assert!(text.contains("[netenv]\nenable = 1\naddrSuffix = 50"), "非房间模式应按主机 IP 末字节写 50：\n{text}");
+
+        // 主机 IP 未配置：不写
+        dep.net.host_ip = None;
+        let text = render_segatools_ini(&dep, None);
+        assert!(!text.contains("addrSuffix"), "主机 IP 未配置不写：\n{text}");
     }
 
     #[test]
@@ -1292,5 +1436,84 @@ dipsw1"), "SDDF 主机在 [gpio] dipsw1");
         let text = render_segatools_ini(&dep, None);
         assert!(text.contains("default = my.server.net"));
         assert!(!text.contains("sdgt.arcadehub.xyz"), "自定义服务器时不再写默认域名");
+    }
+
+    #[test]
+    fn pcbid_serial_format() {
+        // 15 字符 = ACAE01A 前缀（7 字符）+ 8 位 ASCII 数字
+        for _ in 0..16 {
+            let sn = pcbid_serial_random();
+            assert_eq!(sn.len(), 15, "{sn}");
+            assert!(sn.starts_with("ACAE01A"), "{sn}");
+            assert!(
+                sn[8..].bytes().all(|b| b.is_ascii_digit()),
+                "尾 8 位应为数字：{sn}"
+            );
+        }
+    }
+
+    #[test]
+    fn ds_serial_format() {
+        // 16 字符 = AAVE-01A 前缀（含连字符）+ 8 位 ASCII 数字
+        for _ in 0..16 {
+            let sn = ds_serial_random();
+            assert_eq!(sn.len(), 16, "{sn}");
+            assert!(sn.starts_with("AAVE-01A"), "{sn}");
+            assert!(
+                sn[8..].bytes().all(|b| b.is_ascii_digit()),
+                "尾 8 位应为数字：{sn}"
+            );
+        }
+    }
+
+    #[test]
+    fn idz_writes_pcbid_serial() {
+        // IDZ（SDDF / SDER）：传入的 serialNo 原样写入 [pcbid]，ds serial 写 [ds]
+        for gid in ["SDDF", "SDER"] {
+            let mut dep = snapshot();
+            dep.game_id = Some(gid.into());
+            let text = render_segatools_ini_with_pcbid(
+                &dep,
+                None,
+                Some("ACAE01A12345678"),
+                Some("AAVE-01A12345678"),
+            );
+            assert!(
+                text.contains("[pcbid]\nserialNo = ACAE01A12345678"),
+                "{gid} 应写 [pcbid] serialNo：\n{text}"
+            );
+            assert!(
+                text.contains("[ds]\nserialNO = AAVE-01A12345678"),
+                "{gid} 应写 [ds] serialNO：\n{text}"
+            );
+        }
+    }
+
+    #[test]
+    fn pcbid_omitted_for_idac_or_missing() {
+        // IDAC（game_id 未知 → Idac；SDGT → Idac）：即便传入 serial 也不写
+        let text = render_segatools_ini_with_pcbid(
+            &snapshot(),
+            None,
+            Some("ACAE01A12345678"),
+            Some("AAVE-01A12345678"),
+        );
+        assert!(!text.contains("[pcbid]"), "未知 game_id 不写：\n{text}");
+        assert!(!text.contains("serialNO"), "未知 game_id 不写 ds serial：\n{text}");
+        let mut dep = snapshot();
+        dep.game_id = Some("SDGT".into());
+        let text = render_segatools_ini_with_pcbid(
+            &dep,
+            None,
+            Some("ACAE01A12345678"),
+            Some("AAVE-01A12345678"),
+        );
+        assert!(!text.contains("[pcbid]"), "SDGT 不写：\n{text}");
+        assert!(!text.contains("serialNO"), "SDGT 不写 ds serial：\n{text}");
+        // IDZ 但 deploy 层未生成（None）：整节省略
+        dep.game_id = Some("SDDF".into());
+        let text = render_segatools_ini_with_pcbid(&dep, None, None, None);
+        assert!(!text.contains("[pcbid]"), "无 serial 整节省略：\n{text}");
+        assert!(!text.contains("serialNO"), "无 ds serial 整节省略：\n{text}");
     }
 }

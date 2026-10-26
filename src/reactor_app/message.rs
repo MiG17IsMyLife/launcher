@@ -53,8 +53,6 @@ pub enum Message {
     WindowResized(WindowSize),
     CardSlideTick(f64),
     BackToGames,
-    #[allow(dead_code)]
-    LaunchFromCards,
     /// 展开/收起指定游戏行的下拉配置卡片（仿「投币设置」展开卡片）
     GameRowDropToggled(usize),
     /// 游戏行悬停进入：整卡/行头变浅灰高亮（纯视觉，不进动画、不重建整页）
@@ -96,10 +94,7 @@ pub enum Message {
     NamingTextChanged(String),
     /// 点击游戏行下拉卡片的「移除游戏」：弹出二次确认框
     GameRemoveClicked(usize),
-    GlobalPathChanged(usize, String),
     DialogClosed(ContentDialogResult),
-    #[allow(dead_code)]
-    OpenSettings,
     DpiScaleChanged(f64),
     /// 卡片合成失败汇总（由卡片页的 use_effect 发出，写入状态栏 toast）
     CardComposeFailed(String),
@@ -122,6 +117,8 @@ pub enum Message {
     NetworkSimulateToggled(bool),
     /// 服务器地址（域名 / IP）编辑；空 = 默认 sdgt.arcadehub.xyz
     ServerHostChanged(String),
+    /// 房间昵称编辑（设置页）；空 = 未设置（创建/加入房间时弹窗提示）
+    RoomNickChanged(String),
     /// ServerBox 静态绑定 IP 编辑（仅「模拟网络」关闭时可配置）；空 = 未配置
     ServerboxIpChanged(String),
     /// 主机（本机游戏）IP 编辑（选中 awl 网卡时锁定）；空 = 未配置
@@ -208,18 +205,12 @@ pub enum Message {
     /// None = 监督线程因代数过期/句柄被取走而静默退出（update 直接忽略）
     VpnDied(Option<String>),
     // ---- 房间（虚拟局域网） ----
-    /// 创建房间确认（对话框回车/确定；password 非空 = 私密房）
-    #[allow(dead_code)]
-    RoomCreateConfirmed { name: String, game_idx: Option<usize>, password: String },
     /// 大厅游戏筛选变化（None/Some(0) = 全部；Some(i>0) = db::games()[i-1]）
     RoomFilterChanged(Option<usize>),
     /// 创建对话框：游戏选择变化（下标对应 db::game_names()）
     RoomCreateGameChanged(Option<usize>),
     /// 开房后台任务结果：Ok(room_id) / Err(错误信息)
     RoomCreateResult(Result<String, String>),
-    /// 加入房间确认（对话框回车/确定）
-    #[allow(dead_code)]
-    RoomJoinConfirmed { room_id: String, password: String },
     /// 加入后台任务结果：Ok(JoinInfo 含座位 IP/游戏) / Err(错误信息)
     RoomJoinResult(Result<crate::roomdir::JoinInfo, String>),
     /// 成员点「离开房间」
@@ -242,6 +233,11 @@ pub enum Message {
     RoomCreatePasswordChanged(String),
     /// 房间页：打开「加入房间」对话框
     RoomOpenJoinDialog,
+    /// 延迟一拍后打开昵称提示弹窗：昵称为空分支此刻仍处在创建/加入弹窗
+    /// on_closed 的消息周期内，WinUI 同一时刻只允许一个 ContentDialog，
+    /// 立即开第二个会被静默拒绝（弹窗不出现 → 创建/加入看似没反应）。
+    /// 动作参数先暂挂在 `room_nick_pending`，本消息到达后再真正开窗。
+    RoomNickPromptReady,
     /// 房间页：手动刷新公开房间列表
     RoomRefreshList,
     /// 房间页：公开房间行内直接加入（公开房无需密码）
@@ -318,6 +314,14 @@ pub struct IcfPayload {
     pub(super) result: Result<(icf::IcfInfo, db::DbMatch), String>,
 }
 
+/// 未设昵称弹窗暂挂的房间动作（「跳过」后用默认昵称重放；UI 输入仍在组件状态，
+/// 但创建对话框参数随弹窗关闭丢失，故在此暂存）。
+#[derive(Clone, Debug)]
+pub(super) enum PendingRoomAction {
+    Create { name: String, game_idx: Option<usize>, password: String },
+    Join { room_id: String, password: String },
+}
+
 pub(super) enum Dialog {
     None,
     Naming {
@@ -327,9 +331,6 @@ pub(super) enum Dialog {
     ConfirmRemove {
         index: usize,
         name: String,
-    },
-    Global {
-        paths: [String; 5],
     },
     /// 输入设置：按键捕获中（slot 对应 INPUT_BUTTONS，label 为按键名）
     InputCapture {
@@ -356,6 +357,11 @@ pub(super) enum Dialog {
     RoomJoin {
         room_id: String,
         password: String,
+    },
+    /// 未设昵称提示（创建/加入房间前）：主按钮「前往设置」/
+    /// 关闭按钮「跳过（本次用默认昵称 player1234 并重放暂挂动作）」
+    RoomNickPrompt {
+        pending: PendingRoomAction,
     },
     /// 通用报错弹窗：整段错误信息展示，仅「知道了」按钮关闭
     Error {

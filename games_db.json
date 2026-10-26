@@ -213,6 +213,9 @@
         "support_game": [
           {
               "version": "2.31.00"
+          },
+          {
+              "version": "2.10.00"
           }
         ]        
     },

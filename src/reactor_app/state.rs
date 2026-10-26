@@ -15,9 +15,11 @@ pub struct GameRuntime {
     /// segatools 游戏：游戏退出后按映像名终止 amdaemon.exe
     /// （对应 launch.bat 末尾的 taskkill /f /im amdaemon.exe）
     pub(super) kill_amdaemon: bool,
-    /// 该游戏配置的 ServerBox 文件名（IDAS4~8 / IDZ 等）：
-    /// 手动启动的 ServerBox 启动器不持有句柄，游戏关闭 / 退出时按映像名回收
-    pub(super) serverbox_image: Option<String>,
+    /// 需按映像名强杀的 ServerBox 文件名列表（IDAS4~8 / IDZ 等）：
+    /// 手动启动的 ServerBox 启动器不持有句柄，游戏关闭 / 退出时按映像名回收。
+    /// IDZ（SDDF / SDER）固定追加对应版本（ServerBoxD8_Nu_x64[_CHN].exe），见
+    /// [`crate::segatools::idz_serverbox_image`]；与手动配置的文件名并存去重。
+    pub(super) serverbox_images: Vec<String>,
     /// 启动游戏前为本机网卡添加的 ServerBox 静态 IP（网卡名, IP）：
     /// 仅普通网卡且无第二个地址时才添加；游戏退出后据此删除。
     /// awl 虚拟网卡（店内对战）地址由房间流程管理，恒为 None，不参与增删。
@@ -27,14 +29,14 @@ pub struct GameRuntime {
 impl GameRuntime {
     /// 游戏退出后需按映像名强杀的伴随进程：
     /// - segatools：amdaemon（inject 派生，句柄杀不到）
-    /// - IDAS4~8 / IDZ：手动启动的 ServerBox（取游戏记录中的 ServerBox 文件名）
+    /// - IDAS4~8 / IDZ：手动启动的 ServerBox + IDZ 固定版本（serverbox_images）
     /// taskkill 未命中（如该进程未在运行）仅返回错误码，静默忽略。
     pub(super) fn taskkill_images(&self) {
         let mut images: Vec<&str> = Vec::new();
         if self.kill_amdaemon {
             images.push("amdaemon.exe");
         }
-        if let Some(sb) = &self.serverbox_image {
+        for sb in &self.serverbox_images {
             images.push(sb.as_str());
         }
         for image in images {

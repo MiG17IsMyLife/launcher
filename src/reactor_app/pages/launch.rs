@@ -109,18 +109,45 @@ impl Launcher {
                 }))
             }
             // segatools（IDAC）：快照带游戏版本（spike 匹配）与 game_id（dipsw 仅 SDGT）；
-            // 网段维持所选网段不变，房间模式由 room 覆盖（[keychip] subnet → 房间网段）
-            Loader::Segatools => Some(launch::DeployConfig::Segatools(segatools::DeploySnapshot {
-                net,
-                system: self.system.clone(),
-                coin: self.coin.clone(),
-                input: self.input.clone(),
-                graphics: self.graphics.clone(),
-                version: rec.version.clone(),
-                game_id: rec.game_id.clone(),
-                aime_card: card.clone(),
-                room: self.room_net_override(),
-            })),
+            // 网段维持所选网段不变，房间模式由 room 覆盖（[keychip] subnet → 房间网段）。
+            // 房间模式下 dipsw 按房间角色/座位自动设置（忽略系统设置残留值）：
+            // - dipsw1（主机位）：房主=1、成员=0（成员启动 IDZ 时 [gpio] dipsw1 自动为 0）
+            // - dipsw3~5（机位，仅 IDAC）：房主=A1；成员按目录分配的座位 IP 末字节
+            //   （.103→A2、.104→B1、.105→B2）；末字节无法识别时保持系统设置值
+            Loader::Segatools => {
+                let mut system = self.system.clone();
+                if self.room_net_override().is_some() {
+                    let is_host = matches!(
+                        self.room_status,
+                        crate::awl::RoomStatus::Hosting { .. }
+                    );
+                    system.master = Some(is_host);
+                    let seat_ip = if is_host {
+                        Some(crate::awl::HOST_GAME_IP.to_string())
+                    } else {
+                        self.room_my_ip.clone()
+                    };
+                    if let Some(name) = seat_ip
+                        .as_deref()
+                        .and_then(|ip| ip.rsplit('.').next())
+                        .and_then(|s| s.parse::<u8>().ok())
+                        .and_then(super::room::seat_name_of_octet)
+                    {
+                        system.seat = Some(name.to_string());
+                    }
+                }
+                Some(launch::DeployConfig::Segatools(segatools::DeploySnapshot {
+                    net,
+                    system,
+                    coin: self.coin.clone(),
+                    input: self.input.clone(),
+                    graphics: self.graphics.clone(),
+                    version: rec.version.clone(),
+                    game_id: rec.game_id.clone(),
+                    aime_card: card.clone(),
+                    room: self.room_net_override(),
+                }))
+            }
         };
 
         // ServerBox 静态 IP：启动时若选中网卡（非 awl 虚拟网卡）没有第二个 IPv4 地址，
@@ -397,6 +424,34 @@ impl Launcher {
                 }
             };
 
+            // ServerBox 映像名回收列表：手动配置的 ServerBox 文件名 + IDZ 固定版本
+            // （SDDF→ServerBoxD8_Nu_x64.exe / SDER→ServerBoxD8_Nu_x64_CHN.exe），同名去重。
+            // game_id：CRC 命中识别库；segatools 游戏（IDZ）入库无 CRC，回退 ICF 识别
+            // 存进记录的 game_id——否则 is_idz 恒 false，IDZ 的 ServerBox 进程关不掉
+            let game_id = record_db_match(&rec)
+                .and_then(|m| m.game_id)
+                .or_else(|| {
+                    rec.game_id
+                        .as_deref()
+                        .map(str::trim)
+                        .filter(|s| !s.is_empty())
+                        .map(str::to_string)
+                });
+            let is_idz = crate::segatools::game_kind(game_id.as_deref())
+                == crate::segatools::GameKind::Idz;
+            let mut serverbox_images: Vec<String> = rec
+                .serverbox
+                .as_deref()
+                .and_then(|p| Path::new(p).file_name().map(|n| n.to_string_lossy().into_owned()))
+                .into_iter()
+                .collect();
+            if is_idz {
+                let fixed = crate::segatools::idz_serverbox_image(game_id.as_deref());
+                if !serverbox_images.iter().any(|n| n.eq_ignore_ascii_case(fixed)) {
+                    serverbox_images.push(fixed.to_string());
+                }
+            }
+
             // 游戏已成功拉起：把进程句柄交给组件状态，回报 GameLaunched 进入「运行中」。
             // 部分加载器进程会在游戏窗口关闭后继续驻留，若在本后台任务里 child.wait() 会一直
             // 阻塞、导致状态栏停在「正在启动游戏…」。改为由 GamePollTick 轮询 try_wait 判断
@@ -407,10 +462,8 @@ impl Launcher {
                     child: Arc::new(Mutex::new(game)),
                     companions: Arc::new(Mutex::new(companions)),
                     kill_amdaemon: rec.loader == Loader::Segatools,
-                    // ServerBox 文件名：手动启动的 ServerBox 关闭游戏时按映像名回收
-                    serverbox_image: rec.serverbox.as_deref().and_then(|p| {
-                        Path::new(p).file_name().map(|n| n.to_string_lossy().into_owned())
-                    }),
+                    // 手动启动的 ServerBox + IDZ 固定版本：关闭游戏时按映像名回收
+                    serverbox_images,
                     // 启动前为本机网卡添加的 ServerBox 静态 IP：游戏退出后回删
                     // （awl 虚拟网卡分支恒为 None，地址由房间流程管理）
                     added_static_ip,

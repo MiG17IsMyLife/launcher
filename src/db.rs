@@ -203,7 +203,6 @@ pub fn lookup(crc: u32, loader: Loader) -> Option<DbMatch> {
 /// 按 game_id + 版本查产品与构建（ICF 识别路径）：ICF 解析出的 id / version 与库内
 /// `game_id`、`support_game[].version`（xx.xx.xx 格式）匹配。版本按数值比较，
 /// "3.21.00" 与 "3.21.0" / "3.21" 等价；同 id 多产品时取首个。未命中返回 None。
-#[allow(dead_code)] // IDAC 接入预留接口：ICF 识别流程接入后即有调用方
 pub fn lookup_by_game_id(game_id: &str, version: &str) -> Option<DbMatch> {
     let want = parse_version(version)?;
     db().games.iter().find_map(|g| {

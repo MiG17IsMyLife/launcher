@@ -70,6 +70,7 @@
 | ——固定 | `[mice] apply_patches` | 恒 `false` |
 | 日志级别 | `[mice] log_level` | error→2 / warn→3 / info→4 / debug→5 / trace→6；未设置写 4（info 默认） |
 | Keychip | `[sysconf] keychip_serial` | 原样；未设置不写 |
+| Region | `[sysconf] region` | JPN→1 / EXP→4 / CHN→8（与 mice 二进制说明一致：1=Jpn 2=USA 4=Exp 8=Chn）；未设置不写 |
 | 网段 CIDR | `[sysconf] keychip_subnet` | 原样；未设置不写 |
 | 投币·免费游玩 | `[sysconf] freeplay` | true/false |
 | 网段 → 推导 | `[network] ip_address` | 网段基址 + 102（游戏目录）/ + 101（ServerBox 目录） |
@@ -85,6 +86,7 @@
 | 启动器设置 | `[节] 键` | 规则 |
 | --- | --- | --- |
 | 模拟网络 | `[ServerBox] simulateNetwork` / `offlineMode` | 未设置视为开：`simulateNetwork = true` + `offlineMode = false`；显式关只写 `simulateNetwork = false`（不写 `offlineMode = true`） |
+| 跳过读卡器初始化 | `[ServerBox] skipInitialization` | 同向且**始终写出**：开 → `true`，关 / 未设置 → `false` |
 | 投币·开始/续关/购卡/购车 | `[Coins] start / continues / card / car` | 数值；未填的键跳过 |
 | 图形·渲染倍数 | `[Graphics] render_scale` | 2x→2 / 4x→3 / 8x→4 |
 | 输入·类型 / 比率 | `[io3] mode / restrict_` | 字符串 xinput/dinput；0~255 |
@@ -163,7 +165,7 @@
 
 **图形设置页**：默认设置（开关，开启后忽略以下选项并禁用其控件）、无边框模式（开关）、全屏模式（开关）、分辨率下拉框（`1360x768` / `1920x1080` / `2560x1440` / `3840x2160`）、渲染倍数（开关，打开后显示「渲染倍率」下拉框：2x/4x/8x）、MSAA 抗锯齿（开关，打开后显示「MSAA 倍数」下拉框：2x/4x/8x）、各向异性过滤（开关，打开后显示「过滤倍数」下拉框：2x/4x/8x/16x）。全部保存到 `config.ini` 的 `[graphics]` 节（键名 `default` / `borderless` / `fullscreen` / `resolution` / `render_scale` + `render_scale_level` / `msaa` + `msaa_level` / `af` + `af_level`，留空未设置）。
 
-**系统设置页**：日志级别（error/warn/info/debug/trace，kitten 无 log=off 故不提供）、Region（JPN=日本 / EXP=出口 / CHN=中国）、Keychip（钥匙芯片序列号）、跳过读卡器初始化。设置写入启动器自己的 `config.ini`（exe 同目录，`ini.rs` 保留注释只改键）；**kitten 游戏启动时**由这些设置生成 `<游戏目录>\kitten\config.ini`（见 1.1，每次整文件重建），mice 不参与生成。`[system]` 节键名：
+**系统设置页**：日志级别（error/warn/info/debug/trace，kitten 无 log=off 故不提供）、Region（JPN=日本 / EXP=出口 / CHN=中国）、Keychip（钥匙芯片序列号）、跳过读卡器初始化。设置写入启动器自己的 `config.ini`（exe 同目录，`ini.rs` 保留注释只改键）；**kitten 游戏启动时**由这些设置生成 `<游戏目录>\kitten\config.ini`（见 1.1，每次整文件重建），**mice 游戏启动时**同样生成 `<游戏目录>\mice\config.ini`（见 1.2，Region 按 1/4/8 写出）。`[system]` 节键名：
 
 | 设置项 | config.ini `[system]` 节键名 | 说明 |
 | --- | --- | --- |

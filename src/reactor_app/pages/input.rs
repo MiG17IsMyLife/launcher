@@ -89,6 +89,66 @@ pub(in crate::reactor_app) const XINPUT_BUTTON_SLOTS: &[(&str, &str, &str)] = &[
     ("刹车键", "Brake", "brake"),
 ];
 
+/// 默认绑定值：模拟轴名（油门/刹车）/ dinput 按钮号（含十字键 1001~1004）/ XInput 按钮名
+// 当前仅 Name 有构造点（XInput 默认表）；dinput 无默认，Axis/Button 暂无构造点
+#[allow(dead_code)]
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(in crate::reactor_app) enum DefaultBinding {
+    Axis(&'static str),
+    Button(u32),
+    Name(&'static str),
+}
+
+/// dinput 默认绑定表：下标对应 INPUT_BUTTONS 槽位（0=油门…18=倒挡），None = 该槽位无工具默认。
+/// dinput 模式下工具无任何默认绑定，保持全 None（未绑定仍显示「未绑定」）。
+pub(in crate::reactor_app) const DINPUT_DEFAULTS: &[Option<DefaultBinding>] = &[
+    None, // 0 油门（轴名）
+    None, // 1 刹车（轴名）
+    None, // 2 升档
+    None, // 3 降档
+    None, // 4 方向上
+    None, // 5 方向下
+    None, // 6 方向左
+    None, // 7 方向右
+    None, // 8 start
+    None, // 9 view
+    None, // 10 投币
+    None, // 11 插卡
+    None, // 12 1 挡
+    None, // 13 2 挡
+    None, // 14 3 挡
+    None, // 15 4 挡
+    None, // 16 5 挡
+    None, // 17 6 挡
+    None, // 18 倒挡
+];
+
+/// XInput 默认绑定表：下标对应 XINPUT_BUTTON_SLOTS 槽位，None = 该槽位无工具默认。
+/// 值为 mice/idas.ini 工具内置的兜底按钮名。
+pub(in crate::reactor_app) const XINPUT_DEFAULTS: &[Option<DefaultBinding>] = &[
+    Some(DefaultBinding::Name("RB")),       // 0 升档键
+    Some(DefaultBinding::Name("LB")),       // 1 降档键
+    Some(DefaultBinding::Name("DPAD_UP")),    // 2 方向上
+    Some(DefaultBinding::Name("DPAD_DOWN")),  // 3 方向下
+    Some(DefaultBinding::Name("DPAD_LEFT")),  // 4 方向左
+    Some(DefaultBinding::Name("DPAD_RIGHT")), // 5 方向右
+    Some(DefaultBinding::Name("A")),          // 6 start 键
+    Some(DefaultBinding::Name("B")),          // 7 view 键
+    Some(DefaultBinding::Name("X")),          // 8 投币键
+    Some(DefaultBinding::Name("Y")),          // 9 插卡键
+    Some(DefaultBinding::Name("RT")),         // 10 油门源
+    Some(DefaultBinding::Name("LT")),         // 11 刹车源
+];
+
+/// 默认绑定值的可读描述（与当前绑定的显示格式一致）
+pub(in crate::reactor_app) fn default_binding_label(d: DefaultBinding) -> String {
+    match d {
+        DefaultBinding::Axis(a) => tf!("轴 {}", "Axis {}", a),
+        DefaultBinding::Button(b) => binding_label(b),
+        DefaultBinding::Name(n) => n.to_string(),
+    }
+}
+
 /// 按捕获槽位取标签（中文、英文）：XInput 映射槽（>= XINPUT_MAP_BASE）查 XINPUT_BUTTON_SLOTS，
 /// 其余查 dinput 的 INPUT_BUTTONS。供超时提示文案复用。
 pub(in crate::reactor_app) fn capture_label(slot: usize) -> Option<(&'static str, &'static str)> {
@@ -100,6 +160,103 @@ pub(in crate::reactor_app) fn capture_label(slot: usize) -> Option<(&'static str
 }
 
 impl Launcher {
+
+    /// dinput 按槽位取当前按钮绑定（2..=18；油门/刹车为轴不在此列）
+    fn dinput_slot_button(&self, slot: usize) -> Option<u32> {
+        match slot {
+            2 => self.input.shift_up,
+            3 => self.input.shift_down,
+            4 => self.input.up_button,
+            5 => self.input.down_button,
+            6 => self.input.left_button,
+            7 => self.input.right_button,
+            8 => self.input.start_button,
+            9 => self.input.view_button,
+            10 => self.input.coin_button,
+            11 => self.input.card_button,
+            12 => self.input.gear1_button,
+            13 => self.input.gear2_button,
+            14 => self.input.gear3_button,
+            15 => self.input.gear4_button,
+            16 => self.input.gear5_button,
+            17 => self.input.gear6_button,
+            18 => self.input.reverse_button,
+            _ => None,
+        }
+    }
+
+    /// dinput 按槽位取当前轴绑定（0=油门 1=刹车）
+    fn dinput_slot_axis(&self, slot: usize) -> Option<&str> {
+        match slot {
+            0 => self.input.throttle_axis.as_deref(),
+            1 => self.input.brake_axis.as_deref(),
+            _ => None,
+        }
+    }
+
+    /// XInput 按槽位取当前按钮名绑定（下标对应 XINPUT_BUTTON_SLOTS）
+    fn xi_slot_binding(&self, local: usize) -> Option<&str> {
+        match local {
+            0 => self.input.xi_shift_up.as_deref(),
+            1 => self.input.xi_shift_dn.as_deref(),
+            2 => self.input.xi_up.as_deref(),
+            3 => self.input.xi_down.as_deref(),
+            4 => self.input.xi_left.as_deref(),
+            5 => self.input.xi_right.as_deref(),
+            6 => self.input.xi_start.as_deref(),
+            7 => self.input.xi_view.as_deref(),
+            8 => self.input.xi_coin.as_deref(),
+            9 => self.input.xi_card.as_deref(),
+            10 => self.input.xi_accel.as_deref(),
+            11 => self.input.xi_brake.as_deref(),
+            _ => None,
+        }
+    }
+
+    /// dinput 同类冲突标记（按 INPUT_BUTTONS 槽位下标）：
+    /// 按钮号与按钮号比（2..=18 同一命名空间，含十字键 1001~1004）、油门轴与刹车轴比，互不跨类。
+    /// 仅比较实际绑定（Some），未绑定不参与。
+    pub(in crate::reactor_app) fn dinput_conflicts(&self) -> Vec<bool> {
+        let mut flags = vec![false; INPUT_BUTTONS.len()];
+        // 轴名冲突：油门 / 刹车同名
+        if let (Some(a), Some(b)) = (self.dinput_slot_axis(0), self.dinput_slot_axis(1)) {
+            if a.eq_ignore_ascii_case(b) {
+                flags[0] = true;
+                flags[1] = true;
+            }
+        }
+        // 按钮号冲突：两两比对已绑定槽位
+        let bound: Vec<(usize, u32)> = (2..INPUT_BUTTONS.len())
+            .filter_map(|s| self.dinput_slot_button(s).map(|c| (s, c)))
+            .collect();
+        for i in 0..bound.len() {
+            for j in (i + 1)..bound.len() {
+                if bound[i].1 == bound[j].1 {
+                    flags[bound[i].0] = true;
+                    flags[bound[j].0] = true;
+                }
+            }
+        }
+        flags
+    }
+
+    /// XInput 同类冲突标记（按 XINPUT_BUTTON_SLOTS 槽位下标）：
+    /// 按钮名与按钮名比（含油门/刹车源——它们也记按钮名，同属一个命名空间）。
+    pub(in crate::reactor_app) fn xinput_conflicts(&self) -> Vec<bool> {
+        let mut flags = vec![false; XINPUT_BUTTON_SLOTS.len()];
+        let bound: Vec<(usize, &str)> = (0..XINPUT_BUTTON_SLOTS.len())
+            .filter_map(|s| self.xi_slot_binding(s).map(|n| (s, n)))
+            .collect();
+        for i in 0..bound.len() {
+            for j in (i + 1)..bound.len() {
+                if bound[i].1.eq_ignore_ascii_case(bound[j].1) {
+                    flags[bound[i].0] = true;
+                    flags[bound[j].0] = true;
+                }
+            }
+        }
+        flags
+    }
 
     /// 持久化输入设置到 config.ini（成功静默，失败弹窗提示）
     pub(in crate::reactor_app) fn save_input(&mut self) {
@@ -147,6 +304,10 @@ impl Launcher {
         let kind_idx = INPUT_KINDS
             .iter()
             .position(|v| Some(*v) == cfg.kind.as_deref());
+
+        // 同类冲突标记（红框/红字高亮冲突行）：dinput 按键与轴、XInput 按钮名，互不跨类
+        let dinput_conf = self.dinput_conflicts();
+        let xi_conf = self.xinput_conflicts();
 
         // 设备下拉框：快照标签 + 已保存值对应的下标（category：0=方向盘 1=踏板 2=排挡 3=XInput 手柄）。
         // dinput 保存的是设备名（label）；XInput 没有设备名，保存的是槽位索引（path 存 "0"~"3"），
@@ -218,8 +379,17 @@ impl Launcher {
                 17 => self.input.gear6_button.map(binding_label),
                 _ => self.input.reverse_button.map(binding_label),
             };
-            let desc = current.unwrap_or_else(|| t!("未绑定", "Unbound").to_string());
-            // 左侧：图标 +（标题 + 下方副文本：当前绑定）
+            // 冲突标记：与同命名空间的其他槽位绑定了相同按钮号/轴名
+            let conflict = dinput_conf[slot];
+            // 未绑定时显示工具默认绑定（无默认则「未绑定」）
+            let desc = match current {
+                Some(c) => c,
+                None => match DINPUT_DEFAULTS.get(slot).copied().flatten() {
+                    Some(d) => tf!("默认 {}", "Default: {}", default_binding_label(d)),
+                    None => t!("未绑定", "Unbound").to_string(),
+                },
+            };
+            // 左侧：图标 +（标题 + 下方副文本：当前绑定 / 默认值）
             let left: View = StackPanel::new()
                 .orientation(Orientation::Horizontal)
                 .spacing(14.0)
@@ -232,10 +402,15 @@ impl Launcher {
                         .vertical_alignment(VerticalAlignment::Center)
                         .children((
                             TextBlock::new().text(i18n::pick(zh, en)).font_size(14.0),
-                            TextBlock::new()
-                                .text(desc)
-                                .font_size(12.0)
-                                .opacity(0.6),
+                            {
+                                let mut tb = TextBlock::new().text(desc).font_size(12.0);
+                                if conflict {
+                                    tb = tb.foreground(Brush::Solid(Color::argb(255, 0xE8, 0x11, 0x23)));
+                                } else {
+                                    tb = tb.opacity(0.6);
+                                }
+                                tb
+                            },
                         )),
                 ))
                 .into();
@@ -273,12 +448,25 @@ impl Launcher {
                 .grid_column(1)
                 .content(right_content)
                 .into();
-            Grid::new()
+            let row: View = Grid::new()
                 .horizontal_alignment(HorizontalAlignment::Stretch)
                 .margin(Thickness::new(16.0, 12.0, 16.0, 12.0))
                 .columns([GridLength::Star(1.0), GridLength::Auto])
                 .children((left, right))
-                .into()
+                .into();
+            if conflict {
+                // 冲突高亮：红色描边 + 淡红底
+                Border::new()
+                    .horizontal_alignment(HorizontalAlignment::Stretch)
+                    .corner_radius(4.0)
+                    .border_brush(Brush::Solid(Color::argb(255, 0xE8, 0x11, 0x23)))
+                    .border_thickness(1.5)
+                    .background(Color::argb(30, 0xE8, 0x11, 0x23))
+                    .content(row)
+                    .into()
+            } else {
+                row
+            }
         };
 
         // XInput 按钮名映射行：与 dinput 的 button_row 同构，但当前绑定显示 mice 按钮名，
@@ -301,8 +489,17 @@ impl Launcher {
                 10 => self.input.xi_accel.clone(),
                 _ => self.input.xi_brake.clone(),
             };
-            let desc = current.unwrap_or_else(|| t!("未绑定", "Unbound").to_string());
-            // 左侧：图标 +（标题 + 下方副文本：当前绑定）
+            // 冲突标记：与其他槽位绑定了相同按钮名
+            let conflict = xi_conf[slot_local];
+            // 未绑定时显示工具默认绑定（无默认则「未绑定」）
+            let desc = match current {
+                Some(c) => c,
+                None => match XINPUT_DEFAULTS.get(slot_local).copied().flatten() {
+                    Some(d) => tf!("默认 {}", "Default: {}", default_binding_label(d)),
+                    None => t!("未绑定", "Unbound").to_string(),
+                },
+            };
+            // 左侧：图标 +（标题 + 下方副文本：当前绑定 / 默认值）
             let left: View = StackPanel::new()
                 .orientation(Orientation::Horizontal)
                 .spacing(14.0)
@@ -315,10 +512,15 @@ impl Launcher {
                         .vertical_alignment(VerticalAlignment::Center)
                         .children((
                             TextBlock::new().text(i18n::pick(zh, en)).font_size(14.0),
-                            TextBlock::new()
-                                .text(desc)
-                                .font_size(12.0)
-                                .opacity(0.6),
+                            {
+                                let mut tb = TextBlock::new().text(desc).font_size(12.0);
+                                if conflict {
+                                    tb = tb.foreground(Brush::Solid(Color::argb(255, 0xE8, 0x11, 0x23)));
+                                } else {
+                                    tb = tb.opacity(0.6);
+                                }
+                                tb
+                            },
                         )),
                 ))
                 .into();
@@ -333,12 +535,25 @@ impl Launcher {
                 .grid_column(1)
                 .content(capture_btn)
                 .into();
-            Grid::new()
+            let row: View = Grid::new()
                 .horizontal_alignment(HorizontalAlignment::Stretch)
                 .margin(Thickness::new(16.0, 12.0, 16.0, 12.0))
                 .columns([GridLength::Star(1.0), GridLength::Auto])
                 .children((left, right))
-                .into()
+                .into();
+            if conflict {
+                // 冲突高亮：红色描边 + 淡红底
+                Border::new()
+                    .horizontal_alignment(HorizontalAlignment::Stretch)
+                    .corner_radius(4.0)
+                    .border_brush(Brush::Solid(Color::argb(255, 0xE8, 0x11, 0x23)))
+                    .border_thickness(1.5)
+                    .background(Color::argb(30, 0xE8, 0x11, 0x23))
+                    .content(row)
+                    .into()
+            } else {
+                row
+            }
         };
 
         // ---- 基本设置：固定的 test / service / 投币键 + 输入模式 + 输入比率 ----
