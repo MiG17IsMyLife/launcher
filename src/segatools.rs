@@ -27,7 +27,7 @@
 //! | `[keychip] region` | IDAC：Region JPN→1、EXP→4、CHN→8 |
 //! | `[ds] region` | IDZ：Region 同上映射（样例注释 1=日本 4=出口） |
 //! | `[gpio] dipsw1` | IDZ：「主机」勾选（1/0） |
-//! | `[gfx] enable / width / height / framed` | IDZ：图形设置关闭「默认设置」→ `enable=1` 并写 `width` / `height`（所选分辨率，未设置时默认 1920x1080），无边框模式开启另写 `framed=0`；默认设置开启（含未设置）→ `enable=0`；其余图形选项（全屏 / 渲染倍数 / MSAA / 各向异性过滤）不落 segatools.ini |
+//! | `[gfx] enable / width / height / framed / windowed` | IDZ：图形设置关闭「默认设置」→ `enable=1` 并写 `width` / `height`（所选分辨率，未设置时默认 1920x1080），`framed`（无边框模式开启=0、否则=1）与 `windowed=1`（恒值）；默认设置开启（含未设置）→ `enable=0`；其余图形选项（渲染倍数 / MSAA / 各向异性过滤）不落 segatools.ini |
 //! | `[system] enable` | 固定 `1` |
 //! | `[system] freeplay` | 投币设置「免费游玩」 |
 //! | `[system] dipsw1` | 机位设置的「主机」勾选（未勾选且单机时自动为 1）；**仅 SDGT** |
@@ -58,6 +58,7 @@ use crate::tf;
 
 /// 部署快照：点击启动时由 UI 克隆全局设置构建；`version` 用于 spike 补丁匹配，
 /// `game_id` 决定 [system] dipsw 是否写入（仅 SDGT）。
+#[derive(Clone)]
 pub struct DeploySnapshot {
     pub net: NetworkConfig,
     pub system: SystemConfig,
@@ -367,8 +368,8 @@ pub fn render_segatools_ini_with_pcbid(
 
     // ---- [gfx]：IDZ 图形钩子——图形设置关闭「默认设置」时开启（enable=1），
     //      并写所选分辨率为 width / height（未设置或值异常时默认 1920x1080），
-    //      无边框模式开启另写 framed=0；「默认设置」开启（含未设置）写 enable=0
-    //      （样例默认）。其余图形选项（全屏 / 渲染倍数 / MSAA / 各向异性过滤）
+    //      framed：无边框模式开启=0、否则=1；windowed 恒为 1；「默认设置」开启（含未设置）
+    //      写 enable=0（样例默认）。其余图形选项（渲染倍数 / MSAA / 各向异性过滤）
     //      由游戏侧加载器处理，不落 segatools.ini ----
     if kind == GameKind::Idz {
         let custom = dep.graphics.default == Some(false);
@@ -382,9 +383,12 @@ pub fn render_segatools_ini_with_pcbid(
                 .unwrap_or(GFX_RESOLUTION_DEFAULT);
             s.push("gfx", "width", &w.to_string());
             s.push("gfx", "height", &h.to_string());
-            if dep.graphics.borderless == Some(true) {
-                s.push("gfx", "framed", "0");
-            }
+            s.push(
+                "gfx",
+                "framed",
+                if dep.graphics.borderless == Some(true) { "0" } else { "1" },
+            );
+            s.push("gfx", "windowed", "1");
         }
     }
 
@@ -1111,7 +1115,10 @@ enable = 0"), "IDZ 图形钩子默认关闭");
             text.contains("[gfx]\nenable = 1\nwidth = 1920\nheight = 1080"),
             "关闭默认设置 + 选分辨率：\n{text}"
         );
-        assert!(!text.contains("framed"), "无边框未开启不写 framed：\n{text}");
+        assert!(
+            text.contains("\nframed = 1\nwindowed = 1"),
+            "无边框未开启应写 framed=1 且 windowed=1：\n{text}"
+        );
 
         // 关闭默认设置但未选分辨率：宽高回退默认 1920x1080
         let mut dep = snapshot();
@@ -1123,9 +1130,8 @@ enable = 0"), "IDZ 图形钩子默认关闭");
             "未选分辨率应写默认宽高：\n{text}"
         );
 
-        // 无边框模式开启 → [gfx] framed=0；其余图形选项（全屏 / 渲染倍数 / MSAA / AF）不落
+        // 无边框模式开启 → [gfx] framed=0（windowed 恒 1）；其余图形选项（渲染倍数 / MSAA / AF）不落
         dep.graphics.borderless = Some(true);
-        dep.graphics.fullscreen = Some(true);
         dep.graphics.render_scale = Some(true);
         dep.graphics.render_scale_level = Some("2x".into());
         dep.graphics.msaa = Some(true);
@@ -1134,17 +1140,20 @@ enable = 0"), "IDZ 图形钩子默认关闭");
         dep.graphics.af_level = Some("16x".into());
         let text = render_segatools_ini(&dep, None);
         assert!(
-            text.contains("[gfx]\nenable = 1\nwidth = 1920\nheight = 1080\nframed = 0"),
-            "无边框开启应写 framed=0：\n{text}"
+            text.contains("[gfx]\nenable = 1\nwidth = 1920\nheight = 1080\nframed = 0\nwindowed = 1"),
+            "无边框开启应写 framed=0（windowed 恒 1）：\n{text}"
         );
         for key in ["fullscreen", "render_scale", "msaa", "af_level"] {
             assert!(!text.contains(key), "{key} 不应写入 segatools.ini：\n{text}");
         }
 
-        // 无边框明确关闭：不写 framed
+        // 无边框明确关闭：framed=1、windowed 仍恒 1
         dep.graphics.borderless = Some(false);
         let text = render_segatools_ini(&dep, None);
-        assert!(!text.contains("framed"), "无边框关闭不写 framed：\n{text}");
+        assert!(
+            text.contains("\nframed = 1\nwindowed = 1"),
+            "无边框关闭应写 framed=1 且 windowed=1：\n{text}"
+        );
 
         // SDGT（IDAC）不写 [gfx]
         let mut dep = snapshot();

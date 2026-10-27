@@ -154,9 +154,6 @@ pub fn render(dep: &DeploySnapshot) -> String {
         if let Some(b) = dep.graphics.borderless {
             s.push("display", "borderless", bool_str(b));
         }
-        if let Some(b) = dep.graphics.fullscreen {
-            s.push("display", "fullscreen", bool_str(b));
-        }
         if dep.graphics.render_scale == Some(true) {
             if let Some(n) = dep.graphics.render_scale_level.as_deref().and_then(nx_num) {
                 s.push("display", "render_scale", &n.to_string());
@@ -579,7 +576,6 @@ mod tests {
         dep.game_id = Some("SBTS".into());
         dep.graphics.default = Some(false);
         dep.graphics.borderless = Some(false);
-        dep.graphics.fullscreen = Some(true);
         dep.graphics.resolution = Some("1920x1080".into());
         dep.graphics.render_scale = Some(true);
         dep.graphics.render_scale_level = Some("2x".into());
@@ -600,7 +596,6 @@ mod tests {
         // 分区断言：存在且值正确
         assert!(text.contains("[display]\ndipsw = false\nwidth = 1920\nheight = 1080\n"));
         assert!(text.contains("borderless = false"));
-        assert!(text.contains("fullscreen = true"));
         assert!(text.contains("render_scale = 2"));
         assert!(text.contains("msaa_samples = 4"));
         assert!(text.contains("anisotropic = 16"));

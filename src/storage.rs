@@ -298,8 +298,6 @@ pub struct GraphicsConfig {
     pub default: Option<bool>,
     /// 无边框模式
     pub borderless: Option<bool>,
-    /// 全屏模式
-    pub fullscreen: Option<bool>,
     /// 分辨率（如 "1920x1080"）
     pub resolution: Option<String>,
     /// 渲染倍数
@@ -322,7 +320,6 @@ fn load_graphics_from(path: &Path) -> GraphicsConfig {
     GraphicsConfig {
         default: read("default").map(|v| truthy(&v)),
         borderless: read("borderless").map(|v| truthy(&v)),
-        fullscreen: read("fullscreen").map(|v| truthy(&v)),
         resolution: read("resolution"),
         render_scale: read("render_scale").map(|v| truthy(&v)),
         render_scale_level: read("render_scale_level"),
@@ -341,7 +338,6 @@ fn save_graphics_to(path: &Path, cfg: &GraphicsConfig) -> io::Result<()> {
 
     ini::set_value(path, "graphics", "default", flag(cfg.default))?;
     ini::set_value(path, "graphics", "borderless", flag(cfg.borderless))?;
-    ini::set_value(path, "graphics", "fullscreen", flag(cfg.fullscreen))?;
     ini::set_value(
         path,
         "graphics",
@@ -1133,7 +1129,6 @@ mod tests {
         let cfg = GraphicsConfig {
             default: Some(false),
             borderless: Some(true),
-            fullscreen: Some(false),
             resolution: Some("1920x1080".into()),
             render_scale: Some(true),
             render_scale_level: Some("2x".into()),

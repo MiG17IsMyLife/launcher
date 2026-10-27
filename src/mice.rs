@@ -272,9 +272,6 @@ pub fn render_config(dep: &DeploySnapshot, target: MiceTarget) -> String {
 
     // ---- [window]：仅当不使用默认图形配置时考虑；无任何自定义键则整节省略 ----
     if dep.graphics.default != Some(true) {
-        if let Some(b) = dep.graphics.fullscreen {
-            s.push("window", "windowed", bool_str(!b));
-        }
         if let Some(b) = dep.graphics.borderless {
             s.push("window", "borderless", bool_str(b));
         }
@@ -805,13 +802,12 @@ mod tests {
         dep.system.keychip = Some(" A69E-01A99999999 ".into());
         dep.coin.freeplay = Some(true);
         dep.graphics.default = Some(false);
-        dep.graphics.fullscreen = Some(true);
         dep.graphics.borderless = Some(false);
         dep.graphics.resolution = Some("1920x1080".into());
         let text = render_config(&dep, MiceTarget::Game);
         assert!(text.contains("keychip_serial = A69E-01A99999999"));
         assert!(text.contains("freeplay = true"));
-        assert!(text.contains("[window]\nwindowed = false\nborderless = false\ndipsw = false\nw = 1920\nh = 1080\n"));
+        assert!(text.contains("[window]\nborderless = false\ndipsw = false\nw = 1920\nh = 1080\n"));
     }
 
     #[test]

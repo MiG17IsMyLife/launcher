@@ -866,10 +866,6 @@ Fill in the Keychip serial on the System page first."
                 self.graphics.borderless = Some(on);
                 self.save_graphics();
             }
-            Message::GraphicsFullscreenToggled(on) => {
-                self.graphics.fullscreen = Some(on);
-                self.save_graphics();
-            }
             Message::GraphicsResolutionSelected(Some(index)) => {
                 self.graphics.resolution = GFX_RESOLUTIONS.get(index).map(|v| v.to_string());
                 self.save_graphics();

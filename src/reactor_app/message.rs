@@ -148,7 +148,6 @@ pub enum Message {
     // ---- 图形设置页 ----
     GraphicsDefaultToggled(bool),
     GraphicsBorderlessToggled(bool),
-    GraphicsFullscreenToggled(bool),
     GraphicsResolutionSelected(Option<usize>),
     GraphicsRenderScaleToggled(bool),
     GraphicsRenderScaleLevelSelected(Option<usize>),

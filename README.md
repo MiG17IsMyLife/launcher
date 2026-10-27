@@ -33,7 +33,7 @@
 
 仅对**加载器 = kitten** 的游戏生效；mice（RingEdge）的部署与拉起链见 1.2。启动游戏**不再自动连接/断开 VPN**（需要连远程服务器时，请先到「VPN 设置」页手动连接）。
 
-**ServerBox（模拟网络）**：若「模拟网络」为 true（默认开启）且该游戏已配置 ServerBox，会**先**对 ServerBox 走一遍**与游戏完全相同**的流程——部署 kitten 工具与依赖 dll、按启动器设置重建 `<ServerBox 目录>\kitten\config.ini`，再以 `<ServerBox 目录>\kitten.exe -b <文件名>`（cwd = ServerBox 目录）拉起；等待 3 秒后再执行下面的游戏部署与启动；游戏退出时自动关闭 ServerBox。
+**ServerBox（模拟网络）**：若「模拟网络」为 true（默认开启）且该游戏已配置 ServerBox，会**先**对 ServerBox 走一遍**与游戏完全相同**的流程——部署 kitten 工具与依赖 dll、按启动器设置重建 `<ServerBox 目录>\kitten\config.ini`（**图形设置除外**：图形设置仅作用于游戏本体，ServerBox 侧一律忽略，`[display]` 节不写出），再以 `<ServerBox 目录>\kitten.exe -b <文件名>`（cwd = ServerBox 目录）拉起；等待 3 秒后再执行下面的游戏部署与启动；游戏退出时自动关闭 ServerBox。
 
 > **注意**：ServerBox 目录里的 `kitten\config.ini` 也会**每次启动整文件重建**（原手工维护的服务端配置会被覆盖，和游戏目录一样）。
 
@@ -55,7 +55,7 @@
 
 仅对**加载器 = mice** 的游戏生效（如头文字D 8）。启动时按以下顺序自动执行：
 
-1. **ServerBox（已配置且模拟网络开启）**：先把 **mice 工具目录顶层文件**复制到 ServerBox 目录，再按设置生成 `<ServerBox目录>\mice\config.ini`（`ip_address` = 网段基址+101）与 `idas.ini`，随后 `mice.exe -b <ServerBox exe>`（cwd = ServerBox 目录，CMD 窗口保留）**先启动**；
+1. **ServerBox（已配置且模拟网络开启）**：先把 **mice 工具目录顶层文件**复制到 ServerBox 目录，再按设置生成 `<ServerBox目录>\mice\config.ini`（`ip_address` = 网段基址+101）与 `idas.ini`（**图形设置除外**：config.ini 的 `[window]` 节与 idas.ini 的 `[Graphics]` 节均不写出——图形设置仅作用于游戏本体），随后 `mice.exe -b <ServerBox exe>`（cwd = ServerBox 目录，CMD 窗口保留）**先启动**；
 2. **延迟 10 秒**：等待 ServerBox 监听端口；
 3. **读卡器（已配置）**：`mice.exe -p -b picodaemon.exe`（cwd = 读卡器目录，**CMD 窗口保留**），等 1 秒；
 4. **游戏**：先把 **mice 工具目录顶层文件**复制到游戏目录（同名覆盖、幂等跳过；排除 `config.ini` / `idas.ini` / `*.log` / `sram.bin` / `eeprom.bin` 等运行时产物），再按设置生成 `<游戏目录>\mice\config.ini`（`ip_address` = 网段基址+102）与 `idas.ini`，随后 `mice.exe -p -b <游戏exe>`（cwd = 游戏目录，CMD 窗口保留）；
@@ -79,7 +79,7 @@
 | ——固定 | `[network] naominet_jp`、`aime_naominet_jp` | `sdgt.arcadehub.xyz` |
 | ——固定 | `[network] ib_naominet_jp` | `127.0.0.1` |
 | 图形·使用默认=true | —— | `[window]` 整节省略 |
-| 图形·全屏 / 无边框 / 分辨率 | `[window] windowed / borderless / w / h` | windowed = !fullscreen；分辨率同时写 `dipsw = false` |
+| 图形·无边框 / 分辨率 | `[window] borderless / w / h` | 分辨率同时写 `dipsw = false` |
 
 **idas.ini**：
 
@@ -88,7 +88,7 @@
 | 模拟网络 | `[ServerBox] simulateNetwork` / `offlineMode` | 未设置视为开：`simulateNetwork = true` + `offlineMode = false`；显式关只写 `simulateNetwork = false`（不写 `offlineMode = true`） |
 | 跳过读卡器初始化 | `[ServerBox] skipInitialization` | 同向且**始终写出**：开 → `true`，关 / 未设置 → `false` |
 | 投币·开始/续关/购卡/购车 | `[Coins] start / continues / card / car` | 数值；未填的键跳过 |
-| 图形·渲染倍数 | `[Graphics] render_scale` | 2x→2 / 4x→3 / 8x→4 |
+| 图形·渲染倍数 | `[Graphics] render_scale` | 2x→2 / 4x→3 / 8x→4；**仅游戏侧**——ServerBox 侧不写 |
 | 输入·类型 / 比率 | `[io3] mode / restrict_` | 字符串 xinput/dinput；0~255 |
 | 输入（仅 xinput） | `[xinput] singleStickSteering / linearSteering / left·rightStickDeadzone` | 死区 = 32767 × 百分比（默认 20%） |
 | 输入（仅 dinput） | `[dinput] deviceName / pedalsName / shifterName / start / viewChg / shiftUp / shiftDn / accelAxis / brakeAxis` | 设备名 / 按钮号；`accelAxis`/`brakeAxis` 为油门 / 刹车的**模拟轴编号**（捕获踏板得到） |
@@ -163,7 +163,7 @@
 
 **网络设置页**（Win11 设置原生风格）：**网卡下拉框（仅显示已连接的网卡）→ 该网卡的 IPv4 网段下拉框**（仅 IPv4，条目为网段 CIDR，如 `192.168.100.0/24`；同网卡多地址属同一网段时自动去重），选择后立即静默保存到启动器自己的 `config.ini`（exe 同目录 `[network]` 节，`ip` 键存网段 CIDR；保存失败在状态栏提示）；支持「刷新网卡」。
 
-**图形设置页**：默认设置（开关，开启后忽略以下选项并禁用其控件）、无边框模式（开关）、全屏模式（开关）、分辨率下拉框（`1360x768` / `1920x1080` / `2560x1440` / `3840x2160`）、渲染倍数（开关，打开后显示「渲染倍率」下拉框：2x/4x/8x）、MSAA 抗锯齿（开关，打开后显示「MSAA 倍数」下拉框：2x/4x/8x）、各向异性过滤（开关，打开后显示「过滤倍数」下拉框：2x/4x/8x/16x）。全部保存到 `config.ini` 的 `[graphics]` 节（键名 `default` / `borderless` / `fullscreen` / `resolution` / `render_scale` + `render_scale_level` / `msaa` + `msaa_level` / `af` + `af_level`，留空未设置）。
+**图形设置页**：默认设置（开关，开启后忽略以下选项并禁用其控件）、无边框模式（开关）、分辨率下拉框（`1360x768` / `1920x1080` / `2560x1440` / `3840x2160`）、渲染倍数（开关，打开后显示「渲染倍率」下拉框：2x/4x/8x）、MSAA 抗锯齿（开关，打开后显示「MSAA 倍数」下拉框：2x/4x/8x）、各向异性过滤（开关，打开后显示「过滤倍数」下拉框：2x/4x/8x/16x）。全部保存到 `config.ini` 的 `[graphics]` 节（键名 `default` / `borderless` / `resolution` / `render_scale` + `render_scale_level` / `msaa` + `msaa_level` / `af` + `af_level`，留空未设置）。图形设置仅作用于**游戏本体**；启动 ServerBox 时一律忽略（ServerBox 目录生成的配置不含任何图形键）。
 
 **系统设置页**：日志级别（error/warn/info/debug/trace，kitten 无 log=off 故不提供）、Region（JPN=日本 / EXP=出口 / CHN=中国）、Keychip（钥匙芯片序列号）、跳过读卡器初始化。设置写入启动器自己的 `config.ini`（exe 同目录，`ini.rs` 保留注释只改键）；**kitten 游戏启动时**由这些设置生成 `<游戏目录>\kitten\config.ini`（见 1.1，每次整文件重建），**mice 游戏启动时**同样生成 `<游戏目录>\mice\config.ini`（见 1.2，Region 按 1/4/8 写出）。`[system]` 节键名：
 

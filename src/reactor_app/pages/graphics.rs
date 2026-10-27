@@ -1,4 +1,4 @@
-//! 图形设置页：默认设置 / 无边框 / 全屏 / 分辨率 / 渲染倍数 / MSAA / 各向异性过滤。
+//! 图形设置页：默认设置 / 无边框 / 分辨率 / 渲染倍数 / MSAA / 各向异性过滤。
 use windows_reactor::*;
 
 use crate::t;
@@ -31,7 +31,7 @@ impl Launcher {
         }
     }
 
-    /// 图形设置页：默认设置 / 无边框 / 全屏 / 分辨率 / 渲染倍数 / MSAA / 各向异性过滤。
+    /// 图形设置页：默认设置 / 无边框 / 分辨率 / 渲染倍数 / MSAA / 各向异性过滤。
     /// 全部保存到启动器自己的 config.ini（[graphics] 节），由加载器读取。
     pub(in crate::reactor_app) fn graphics_page(&self, context: &mut ViewContext<Self>) -> View {
         let gfx = &self.graphics;
@@ -125,18 +125,6 @@ impl Launcher {
                 ),
             ),
             KeyedView::new("gfx-sep1", separator()),
-            KeyedView::new(
-                "gfx-fullscreen",
-                toggle_row(
-                    Symbol::FullScreen,
-                    t!("全屏模式", "Fullscreen"),
-                    t!("以全屏模式运行", "Run in fullscreen mode"),
-                    gfx.fullscreen == Some(true),
-                    !locked,
-                    Message::GraphicsFullscreenToggled,
-                ),
-            ),
-            KeyedView::new("gfx-sep2", separator()),
             KeyedView::new(
                 "gfx-resolution",
                 combo_row(

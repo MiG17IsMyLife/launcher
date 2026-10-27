@@ -12,8 +12,9 @@
 //! - 测试模式：游戏行勾选「测试模式」时，命令行末尾追加 `-t`（`kitten -b id5.elf -t`）；
 //!             仅作用于游戏本体，ServerBox 不带该参数
 //! - ServerBox：模拟网络（默认开启）且该游戏配置了 ServerBox 时，`launch_serverbox`
-//!              走与游戏同一套部署流程，差异仅在 ip 偏移（kitten 同游戏；mice=网段基址+101），
-//!              以 `-b <ServerBox exe>` 拉起；CMD 窗口隐藏；游戏退出后关闭
+//!              走与游戏同一套部署流程（差异仅在 ip 偏移：kitten 同游戏；mice=网段基址+101；
+//!              **忽略所有图形设置**——图形设置仅作用于游戏本体），Kitten 部署一次后
+//!              直接以部署产物 `kitten.exe -b <文件名>` 拉起；CMD 窗口隐藏；游戏退出后关闭
 //! - 拉起顺序（mice / RingEdge）：**ServerBox 先启动** → 延迟 10 秒 → 读卡器 + 游戏
 //!              （游戏 `mice -b <游戏exe>`——不带读卡器专用的 `-p`、
 //!               读卡器 `mice -p -b picodaemon.exe`、窗口均保留）；
@@ -36,7 +37,7 @@ use crate::detect;
 use crate::kitten;
 use crate::mice;
 use crate::segatools;
-use crate::storage::{GameRecord, Loader, Settings, launcher_dir};
+use crate::storage::{GameRecord, GraphicsConfig, Loader, Settings, launcher_dir};
 use crate::t;
 use crate::tf;
 
@@ -52,6 +53,7 @@ pub struct LoaderPaths {
 const LOADER_NAMES: &[&str] = &["kitten.exe", "mice.exe", "mice64.exe", "inject.exe"];
 
 /// 统一部署快照：按加载器区分（点击「启动」时由 UI 克隆全局设置构建）。
+#[derive(Clone)]
 pub enum DeployConfig {
     Kitten(kitten::DeploySnapshot),
     Mice(mice::DeploySnapshot),
@@ -59,6 +61,22 @@ pub enum DeployConfig {
 }
 
 impl DeployConfig {
+    /// 返回忽略所有图形设置的快照副本（`graphics` 重置为全空的 `GraphicsConfig::default()`）。
+    ///
+    /// 图形设置仅作用于游戏本体：ServerBox 部署一律用本方法去除快照中的图形项，
+    /// 使 ServerBox 目录生成的配置不含任何图形键（kitten 的 `[display]`、mice 的
+    /// `[window]` 与 idas.ini 的 `[Graphics] render_scale`）。各渲染器仅在对应字段
+    /// 为 `Some` 时写出图形键，重置即完整忽略；未来新增图形键（只要仍从快照读取）
+    /// 同样被覆盖，无需再改渲染器。
+    pub fn without_graphics(mut self) -> Self {
+        match &mut self {
+            DeployConfig::Kitten(s) => s.graphics = GraphicsConfig::default(),
+            DeployConfig::Mice(s) => s.graphics = GraphicsConfig::default(),
+            DeployConfig::Segatools(s) => s.graphics = GraphicsConfig::default(),
+        }
+        self
+    }
+
     /// 快照与加载器类型是否匹配（不匹配属于内部错误）。
     fn mismatch_error() -> String {
         t!("游戏启动缺少配置快照或快照与加载器不匹配（内部错误）",
@@ -384,13 +402,23 @@ fn serverbox_dir_of(record: &GameRecord) -> Option<PathBuf> {
 }
 
 /// 仅部署 ServerBox（复制工具 + 生成 config.ini / idas.ini），**不拉起进程**。
-/// 供调试用：单独验证文件拷贝 / 配置生成是否正确。
+///
+/// 部署时忽略所有图形设置（[`DeployConfig::without_graphics`]）——图形设置仅作用于
+/// 游戏本体，ServerBox 目录生成的配置不含任何图形键。
+///
+/// 返回部署产物路径：Kitten = 部署到 ServerBox 目录的 `kitten.exe`（供
+/// [`launch_serverbox`] 直接拉起，避免二次部署）；Mice = `None`（启动用
+/// `resolve_loader` 的工具路径，与部署产物无关）。也可单独调用，供调试验证
+/// 文件拷贝 / 配置生成是否正确。
 pub fn deploy_serverbox(
     record: &GameRecord,
     settings: &Settings,
     detected: &LoaderPaths,
     dep: Option<&DeployConfig>,
-) -> Result<(), String> {
+) -> Result<Option<PathBuf>, String> {
+    // 图形设置仅对游戏本体生效：ServerBox 部署一律忽略（重置快照图形项，幂等）
+    let dep_owned = dep.cloned().map(DeployConfig::without_graphics);
+    let dep = dep_owned.as_ref();
     let sb_path = record
         .serverbox
         .as_deref()
@@ -433,23 +461,28 @@ pub fn deploy_serverbox(
                 tf!("无法确定 mice 工具目录：{}", "Cannot determine the mice tool directory: {}", loader.display())
             })?;
             mice::deploy(&sb_dir, tool_dir, snapshot, mice::MiceTarget::ServerBox)?;
-            Ok(())
+            Ok(None)
         }
-        Loader::Kitten => deploy_only(&sb_rec, settings, detected, dep).map(|_| ()),
+        Loader::Kitten => deploy_only(&sb_rec, settings, detected, dep).map(Some),
         Loader::Segatools => Err(t!("segatools 加载器暂不支持 ServerBox",
             "The segatools loader does not support ServerBox yet").to_string()),
     }
 }
 
 /// 启动该游戏配置的 **ServerBox**（模拟网络时本机跑的服务端）：
-/// 先部署（复制工具 + 生成配置），再以 `-b <ServerBox exe>` 拉起。
+/// 先部署一次（复制工具 + 生成配置；忽略所有图形设置——图形设置仅作用于游戏本体），
+/// 再以 `-b <ServerBox exe>` 拉起。
 pub fn launch_serverbox(
     record: &GameRecord,
     settings: &Settings,
     detected: &LoaderPaths,
     dep: Option<&DeployConfig>,
 ) -> Result<std::process::Child, String> {
-    deploy_serverbox(record, settings, detected, dep)?;
+    // 图形设置仅对游戏本体生效：ServerBox 部署一律忽略（重置快照图形项）
+    let dep_owned = dep.cloned().map(DeployConfig::without_graphics);
+    let dep = dep_owned.as_ref();
+    // 仅部署一次；Kitten 的部署产物（ServerBox 目录内 kitten.exe）直接用于拉起
+    let sb_exe = deploy_serverbox(record, settings, detected, dep)?;
     let sb_path = record
         .serverbox
         .as_deref()
@@ -457,19 +490,17 @@ pub fn launch_serverbox(
     let mut sb_rec = record.clone();
     sb_rec.path = sb_path.to_string();
     sb_rec.test_mode = None;
-    match sb_rec.loader {
-        Loader::Mice => {
-            let loader = resolve_loader(&sb_rec, settings, detected)?;
-            spawn_game(&sb_rec, &loader)
-        }
+    let exe = match sb_rec.loader {
+        Loader::Mice => resolve_loader(&sb_rec, settings, detected)?,
         Loader::Kitten => {
-            let exe = deploy_only(&sb_rec, settings, detected, dep)?;
-            spawn_game(&sb_rec, &exe)
+            sb_exe.ok_or_else(|| DeployConfig::mismatch_error())?
         }
-        Loader::Segatools => Err(t!("segatools 加载器暂不支持 ServerBox",
-            "The segatools loader does not support ServerBox yet").to_string()),
-    }
-    .map_err(|e| format!("ServerBox {e}"))
+        Loader::Segatools => {
+            return Err(t!("segatools 加载器暂不支持 ServerBox",
+                "The segatools loader does not support ServerBox yet").to_string())
+        }
+    };
+    spawn_game(&sb_rec, &exe).map_err(|e| format!("ServerBox {e}"))
 }
 
 /// 读卡器部署 + 启动（picodaemon）：与游戏启动前同思路，先把 mice 工具放进读卡器目录。
@@ -1262,5 +1293,99 @@ mod tests {
             Some(sb.clone())
         );
         cleanup(&sb);
+    }
+
+    // ---- ServerBox 忽略图形设置（DeployConfig::without_graphics） ----
+
+    /// 全部图形项均已设置的快照图形配置（ServerBox 部署时必须被完整忽略）。
+    fn graphics_all_set() -> GraphicsConfig {
+        GraphicsConfig {
+            default: Some(false),
+            borderless: Some(false),
+            resolution: Some("1920x1080".into()),
+            render_scale: Some(true),
+            render_scale_level: Some("2x".into()),
+            msaa: Some(true),
+            msaa_level: Some("4x".into()),
+            af: Some(true),
+            af_level: Some("16x".into()),
+        }
+    }
+
+    #[test]
+    fn without_graphics_ignores_kitten_display() {
+        use crate::kitten;
+        use crate::storage::{CoinConfig, InputConfig, NetworkConfig, SystemConfig};
+        let dep = DeployConfig::Kitten(kitten::DeploySnapshot {
+            net: NetworkConfig::default(),
+            system: SystemConfig::default(),
+            coin: CoinConfig::default(),
+            graphics: graphics_all_set(),
+            input: InputConfig::default(),
+            game_id: None,
+        });
+        // 对照：不去图形时游戏侧渲染含 [display]（图形设置仍作用于游戏本体）
+        let DeployConfig::Kitten(orig) = &dep else { unreachable!() };
+        assert!(kitten::render(orig).contains("[display]"));
+
+        let text = match dep.clone().without_graphics() {
+            DeployConfig::Kitten(s) => kitten::render(&s),
+            _ => unreachable!(),
+        };
+        assert!(!text.contains("[display]"), "ServerBox 侧不应有 [display] 节：\n{text}");
+        assert!(!text.contains("width ="), "分辨率不应写出：\n{text}");
+        assert!(!text.contains("anisotropic"), "各向异性不应写出：\n{text}");
+        // 其余设置不受影响
+        assert!(text.contains("[network]"), "网络节应保留：\n{text}");
+    }
+
+    #[test]
+    fn without_graphics_ignores_mice_window_and_render_scale() {
+        use crate::mice;
+        use crate::storage::{CoinConfig, InputConfig, NetworkConfig, SystemConfig};
+        let dep = DeployConfig::Mice(mice::DeploySnapshot {
+            net: NetworkConfig::default(),
+            system: SystemConfig::default(),
+            coin: CoinConfig::default(),
+            graphics: graphics_all_set(),
+            input: InputConfig::default(),
+            card: None,
+            room: None,
+        });
+        // 对照：不去图形时游戏侧渲染含 [window] 与 render_scale
+        let DeployConfig::Mice(orig) = &dep else { unreachable!() };
+        assert!(mice::render_config(orig, mice::MiceTarget::Game).contains("[window]"));
+        assert!(mice::render_idas(orig).contains("render_scale"));
+
+        let dep2 = dep.clone().without_graphics();
+        let DeployConfig::Mice(s) = &dep2 else { unreachable!() };
+        let cfg = mice::render_config(s, mice::MiceTarget::ServerBox);
+        assert!(!cfg.contains("[window]"), "ServerBox config.ini 不应有 [window] 节：\n{cfg}");
+        assert!(!cfg.contains("windowed"), "windowed 键不应写出：\n{cfg}");
+        let idas = mice::render_idas(s);
+        assert!(!idas.contains("render_scale"), "ServerBox idas.ini 不应写 render_scale：\n{idas}");
+        assert!(!idas.contains("[Graphics]"), "ServerBox idas.ini 不应有 [Graphics] 节：\n{idas}");
+        // 其余设置不受影响
+        assert!(cfg.contains("[network]"), "config.ini 网络节应保留：\n{cfg}");
+        assert!(idas.contains("simulateNetwork"), "idas.ini 模拟网络键应保留：\n{idas}");
+    }
+
+    #[test]
+    fn without_graphics_clears_segatools_graphics() {
+        use crate::storage::{CoinConfig, InputConfig, NetworkConfig, SystemConfig};
+        let dep = DeployConfig::Segatools(segatools::DeploySnapshot {
+            net: NetworkConfig::default(),
+            system: SystemConfig::default(),
+            coin: CoinConfig::default(),
+            input: InputConfig::default(),
+            graphics: graphics_all_set(),
+            version: None,
+            game_id: None,
+            aime_card: None,
+            room: None,
+        });
+        let dep = dep.without_graphics();
+        let DeployConfig::Segatools(s) = &dep else { unreachable!() };
+        assert_eq!(s.graphics, GraphicsConfig::default());
     }
 }
