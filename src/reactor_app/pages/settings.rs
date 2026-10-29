@@ -737,6 +737,9 @@ impl Launcher {
                     }
                 }
             }
+            // 安装成功后重扫加载器：self.detected 是启动器启动时的一次性目录扫描缓存，
+            // 不刷新的话本会话内新装/更新的 mice/kitten 会一直报「未找到」，重启启动器才恢复
+            self.detected = crate::launch::detect_loaders();
         }
         Err(e) => {
             if let Ok(mut s) = self.update_shared.lock() {
