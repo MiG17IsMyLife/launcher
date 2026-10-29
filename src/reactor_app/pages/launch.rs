@@ -48,6 +48,9 @@ impl Launcher {
             .or_else(|| self.store.load_card());
 
             let settings = self.settings.clone();
+            // 启动前重扫加载器目录：self.detected 只是启动器启动时的一次性缓存，
+            // 会话内更新过 mice/kitten 时旧缓存会误报「未找到」（重启启动器才恢复）
+            self.detected = launch::detect_loaders();
             let detected = self.detected.clone();
             // 输入配置（dinput / H 排挡前置检查用）：独立于 snapshots 直接克隆全局配置
             let input_cfg = self.input.clone();
@@ -500,6 +503,8 @@ impl Launcher {
         }
 
         let settings = self.settings.clone();
+        // 启动前重扫加载器目录（与游戏启动同口径），避免会话内更新后仍用旧缓存误报「未找到」
+        self.detected = launch::detect_loaders();
         let detected = self.detected.clone();
         // 生效主机IP/ServerBox IP/网段：与游戏启动同源（房间内按房间覆盖，
         // 否则取保存值，旧配置缺键时回退选中网卡实际地址）

@@ -27,7 +27,8 @@
 //! | `[keychip] region` | IDAC：Region JPN→1、EXP→4、CHN→8 |
 //! | `[ds] region` | IDZ：Region 同上映射（样例注释 1=日本 4=出口） |
 //! | `[gpio] dipsw1` | IDZ：「主机」勾选（1/0） |
-//! | `[gfx] enable / width / height / framed / windowed` | IDZ：图形设置关闭「默认设置」→ `enable=1` 并写 `width` / `height`（所选分辨率，未设置时默认 1920x1080），`framed`（无边框模式开启=0、否则=1）与 `windowed=1`（恒值）；默认设置开启（含未设置）→ `enable=0`；其余图形选项（渲染倍数 / MSAA / 各向异性过滤）不落 segatools.ini |
+//! | `[gfx] enable / windowed` | IDZ：固定 `1` / `1`（图形钩子恒启用、恒窗口化） |
+//! | `[gfx] width / height / framed` | IDZ：图形设置关闭「默认设置」时写 `width` / `height`（所选分辨率，未设置或值异常时默认 1920x1080）与 `framed`（无边框模式开启=0、否则=1）；默认设置开启（含未设置）不写；其余图形选项（渲染倍数 / MSAA / 各向异性过滤）不落 segatools.ini |
 //! | `[system] enable` | 固定 `1` |
 //! | `[system] freeplay` | 投币设置「免费游玩」 |
 //! | `[system] dipsw1` | 机位设置的「主机」勾选（未勾选且单机时自动为 1）；**仅 SDGT** |
@@ -366,15 +367,15 @@ pub fn render_segatools_ini_with_pcbid(
     // ---- [led15070] ----
     s.push("led15070", "enable", "1");
 
-    // ---- [gfx]：IDZ 图形钩子——图形设置关闭「默认设置」时开启（enable=1），
-    //      并写所选分辨率为 width / height（未设置或值异常时默认 1920x1080），
-    //      framed：无边框模式开启=0、否则=1；windowed 恒为 1；「默认设置」开启（含未设置）
-    //      写 enable=0（样例默认）。其余图形选项（渲染倍数 / MSAA / 各向异性过滤）
+    // ---- [gfx]：IDZ 图形钩子——enable 与 windowed 恒为 1（固定写入）；
+    //      「默认设置」关闭时额外写 width / height（所选分辨率，未设置或值异常时
+    //      默认 1920x1080）与 framed（无边框模式开启=0、否则=1）。
+    //      其余图形选项（渲染倍数 / MSAA / 各向异性过滤）
     //      由游戏侧加载器处理，不落 segatools.ini ----
     if kind == GameKind::Idz {
-        let custom = dep.graphics.default == Some(false);
-        s.push("gfx", "enable", bool01(custom));
-        if custom {
+        // enable / windowed 恒为 1（图形钩子始终启用、始终窗口化）
+        s.push("gfx", "enable", "1");
+        if dep.graphics.default == Some(false) {
             let (w, h) = dep
                 .graphics
                 .resolution
@@ -388,8 +389,8 @@ pub fn render_segatools_ini_with_pcbid(
                 "framed",
                 if dep.graphics.borderless == Some(true) { "0" } else { "1" },
             );
-            s.push("gfx", "windowed", "1");
         }
+        s.push("gfx", "windowed", "1");
     }
 
     // ---- 输入段：IDZ 为 [io3]，IDAC 为 [io4]；restrict = 输入信号限制（原「输入比率」，未设置时默认 128）；
@@ -1091,8 +1092,11 @@ mod tests {
         assert!(text.contains("[netenv]\nenable = 1"), "IDZ 写 netenv 开关：\n{text}");
         assert!(!text.contains("addrSuffix"), "主机 IP 未配置时不写 addrSuffix：\n{text}");
         assert!(text.contains("[io3]"), "IDZ 输入段为 io3");
-        assert!(text.contains("[gfx]
-enable = 0"), "IDZ 图形钩子默认关闭");
+        assert!(
+            text.contains("[gfx]\nenable = 1"),
+            "IDZ 图形钩子恒启用：\n{text}"
+        );
+        assert!(text.contains("windowed = 1"), "IDZ 恒窗口化：\n{text}");
         assert!(!text.contains("[indrun]"), "IDZ 无 indrun");
         assert!(!text.contains("dipsw3"), "机位 dipsw 仅 SDGT");
         assert!(!text.contains("[keychip]\nregion"), "IDZ region 不在 keychip");
@@ -1100,12 +1104,14 @@ enable = 0"), "IDZ 图形钩子默认关闭");
 
     #[test]
     fn idz_gfx_follows_default_toggle_and_resolution() {
-        // SDDF / SDER：关闭「默认设置」→ [gfx] enable=1 + 分辨率 width/height；
-        // 默认设置开启（含未设置）→ enable=0，不写宽高
+        // SDDF / SDER：enable=1 与 windowed=1 恒写；「默认设置」开启（含未设置）只写这两键
         let mut dep = snapshot();
         dep.game_id = Some("SDDF".into());
         let text = render_segatools_ini(&dep, None);
-        assert!(text.contains("[gfx]\nenable = 0"), "默认设置未关闭：\n{text}");
+        assert!(
+            text.contains("[gfx]\nenable = 1\nwindowed = 1"),
+            "默认设置未关闭：仅写 enable / windowed：\n{text}"
+        );
         assert!(!text.contains("width") && !text.contains("height"));
 
         dep.graphics.default = Some(false);
