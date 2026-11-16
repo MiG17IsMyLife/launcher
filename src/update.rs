@@ -1,15 +1,3 @@
-//! 加载器自动更新核心：仓库 Release 解析 + 版本比对 + 整目录下载/校验/替换（带回滚）。
-//!
-//! 设计要点：
-//! - 更新源 = 按界面语言为每个组件选定的唯一仓库（中文→GitCode，英文→GitHub），并行查询；
-//! - 取**最新** Release：优先单对象端点 `/releases/latest`；数组端点按「新→旧」重排
-//!   （GitCode 的 `/releases` 是**升序**的，直接取首个会拿到最旧的一条）；
-//! - 从 Release 资产名识别加载器（kitten.zip / mice.zip，兼容内嵌版本命名），版本取 tag 或文件名；
-//!   最新一条没有对应资产时，按「新→旧」回退到更早的一条；
-//! - 判定主键为版本号（点分段数值比较），sha256（GitHub asset digest）仅作下载后完整性校验；
-//! - 更新源返回非 200 / 查询失败时统一按「暂无更新」显示，不轮询其他镜像源；
-//! - 替换范围 = 整目录覆盖 `tools/<loader>`（含依赖），替换前做备份、失败回滚。
-
 use std::collections::HashMap;
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
@@ -38,22 +26,23 @@ use crate::storage::{self, Settings, launcher_dir};
 use crate::t;
 use crate::tf;
 
-/// 更新目标加载器。
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub enum UpdateTarget {
     Kitten,
     Mice,
     Segatools,
-    /// Ultimate-ASI-Loader（GitHub ThirteenAG，win32 NoPDB 变体）
+
     AsiLoader,
-    /// shaderfix-idas（Tendokyu Gitea puniru，IDAS 着色器修复，需 ASI Loader）
+
     ShaderFix,
-    /// awl（AnywhereLAN，虚拟局域网组件，从 git Release 拉取 awl-tray.exe）
+
     Awl,
+
+    Launcher,
 }
 
 impl UpdateTarget {
-    /// 目录名 / loader 名（同时用于匹配 Release 资产名前缀）。
+
     pub fn dir_name(&self) -> &'static str {
         match self {
             UpdateTarget::Kitten => "kitten",
@@ -62,10 +51,10 @@ impl UpdateTarget {
             UpdateTarget::AsiLoader => "asi-loader",
             UpdateTarget::ShaderFix => "shaderfix",
             UpdateTarget::Awl => "awl",
+            UpdateTarget::Launcher => "launcher",
         }
     }
 
-    /// 组件行显示名。
     pub fn display_name(&self) -> &'static str {
         match self {
             UpdateTarget::Kitten => "kittentools",
@@ -74,10 +63,10 @@ impl UpdateTarget {
             UpdateTarget::AsiLoader => "Ultimate-ASI-Loader",
             UpdateTarget::ShaderFix => "shaderfix-idas",
             UpdateTarget::Awl => "awl",
+            UpdateTarget::Launcher => "Sasayaki Launcher",
         }
     }
 
-    /// 组件的默认仓库列表；按 [`select_repo`] 依据界面语言选定唯一更新源。
     pub fn default_repos(&self) -> &'static [&'static str] {
         match self {
             UpdateTarget::Kitten => &[
@@ -96,18 +85,20 @@ impl UpdateTarget {
                 "https://github.com/ThirteenAG/Ultimate-ASI-Loader",
                 "https://gitcode.com/project-sasayaki/Ultimate-ASI-Loader"],
             UpdateTarget::ShaderFix => &["https://gitea.tendokyu.moe/puniru/shaderfix-idas"],
-            // 语言选定：中文 → GitCode，英文 → GitHub（select_repo 依据 i18n::Lang）
+
             UpdateTarget::Awl => &[
                 "https://github.com/project-sasayaki/awl",
                 "https://gitcode.com/project-sasayaki/awl",
             ],
+
+            UpdateTarget::Launcher => &[],
         }
     }
 
-    /// Release 资产名（小写）是否匹配该组件：
-    /// - kitten / mice / segatools：前缀匹配的 zip；
-    /// - asi-loader：win32 NoPDB 变体（排除 x64 与带 PDB 包）；
-    /// - shaderfix：固定 shaderfix.zip。
+    pub fn has_update_source(&self) -> bool {
+        !self.default_repos().is_empty()
+    }
+
     pub fn asset_matches(&self, name_lc: &str) -> bool {
         match self {
             UpdateTarget::Kitten | UpdateTarget::Mice | UpdateTarget::Segatools => {
@@ -119,13 +110,16 @@ impl UpdateTarget {
                     && !name_lc.contains("x64")
             }
             UpdateTarget::ShaderFix => name_lc == "shaderfix.zip",
-            // awl：Windows 构建，资产形如 awl.zip / awl-windows*.zip / awl_v0.19.0*.zip
+
             UpdateTarget::Awl => name_lc.starts_with("awl") && name_lc.ends_with(".zip"),
+
+            UpdateTarget::Launcher => name_lc.starts_with("launcher") && name_lc.ends_with(".zip"),
         }
     }
 }
 
-pub const ALL_TARGETS: [UpdateTarget; 6] = [
+pub const ALL_TARGETS: [UpdateTarget; 7] = [
+    UpdateTarget::Launcher,
     UpdateTarget::Kitten,
     UpdateTarget::Mice,
     UpdateTarget::Segatools,
@@ -134,7 +128,6 @@ pub const ALL_TARGETS: [UpdateTarget; 6] = [
     UpdateTarget::Awl,
 ];
 
-/// 单加载器更新状态（仅用于「未配置/有更新/已最新」等粗粒度指示）。
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum UpdateState {
     NotConfigured,
@@ -144,7 +137,6 @@ pub enum UpdateState {
     Error,
 }
 
-/// 更新进行中的阶段（驱动进度条文案）。
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum UpdatePhase {
     Idle,
@@ -156,22 +148,21 @@ pub enum UpdatePhase {
     Error,
 }
 
-/// 单个加载器的实时状态（共享给后台线程写、UI 读）。
 #[derive(Clone, Debug)]
 pub struct TargetStatus {
     pub state: UpdateState,
     pub phase: UpdatePhase,
     pub download_done: u64,
     pub download_total: u64,
-    /// Release 解析出的远端版本（供安装后回写 baseline）
+
     pub remote_version: Option<String>,
-    /// 首选下载地址
+
     pub url: Option<String>,
-    /// 可选 sha256（下载后校验）
+
     pub sha256: Option<String>,
-    /// 备用下载地址
+
     pub mirrors: Vec<String>,
-    /// 展示文案，如 "1.4.2 → 1.5.0"
+
     pub detail: Option<String>,
 }
 
@@ -191,7 +182,6 @@ impl Default for TargetStatus {
     }
 }
 
-/// 全部加载器的更新状态（进程内共享）。
 #[derive(Clone, Debug)]
 pub struct UpdateStatus {
     pub per_target: HashMap<UpdateTarget, TargetStatus>,
@@ -207,7 +197,6 @@ impl Default for UpdateStatus {
     }
 }
 
-/// 从仓库 Release 解析出的单个加载器更新条目。
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct LoaderRelease {
     pub name: String,
@@ -217,45 +206,33 @@ pub struct LoaderRelease {
     pub sha256: Option<String>,
 }
 
-/// 全部加载器的远端更新索引（多仓库 Release 解析合并后的结果）。
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
 pub struct UpdateIndex {
     pub loaders: Vec<LoaderRelease>,
 }
 
-/// Release 资产（GitHub / GitCode / Gitea 响应同构）。
 #[derive(Clone, Debug, Deserialize)]
 pub struct ReleaseAsset {
     pub name: String,
     pub browser_download_url: String,
-    /// GitHub 提供的完整性摘要，形如 "sha256:abcd..."；其他平台无此字段。
+
     #[serde(default)]
     pub digest: Option<String>,
 }
 
-/// Release 响应（只取需要的字段）。
-///
-/// `release_status` / `created_at` 仅 GitCode / Gitee 系平台提供，用于从**数组端点**
-/// 返回的 Release 列表中识别哪一条是最新的（GitCode 的 `/releases` 按发布时间**升序**
-/// 返回，直接取首个会拿到最旧的一条）。
 #[derive(Clone, Debug, Deserialize)]
 pub struct ReleaseInfo {
     pub tag_name: String,
     #[serde(default)]
     pub assets: Vec<ReleaseAsset>,
-    /// GitCode 标记最新 Release 为 "latest"（其余为 "none"）。
+
     #[serde(default)]
     pub release_status: Option<String>,
-    /// ISO8601 创建时间，如 "2026-10-11T10:56:09+08:00"。
+
     #[serde(default)]
     pub created_at: Option<String>,
 }
 
-// ----------------------------------------------------------------------------
-// 版本比较（点分段数值比较，避免 "1.10" < "1.9" 这类字典序错误）
-// ----------------------------------------------------------------------------
-
-/// 解析版本号为纯数字段（去掉前导 v，忽略非数字后缀）。
 fn parse_version(s: &str) -> Vec<u64> {
     s.trim_start_matches('v')
         .split(['.', '-', '+'])
@@ -266,7 +243,6 @@ fn parse_version(s: &str) -> Vec<u64> {
         .collect()
 }
 
-/// 比较两个版本：Less / Equal / Greater。
 pub fn compare_versions(a: &str, b: &str) -> std::cmp::Ordering {
     let pa = parse_version(a);
     let pb = parse_version(b);
@@ -281,12 +257,6 @@ pub fn compare_versions(a: &str, b: &str) -> std::cmp::Ordering {
     std::cmp::Ordering::Equal
 }
 
-// ----------------------------------------------------------------------------
-// 缓存（24h 内不重拉；手动检查可破缓存）
-// ----------------------------------------------------------------------------
-
-/// 缓存结构版本：解析规则变更（如修掉「拿到最旧 Release」这类问题）时递增，
-/// 使旧版本写入的 `update_cache.json` 自动失效，无需用户手工删除。
 const CACHE_SCHEMA: u32 = 2;
 
 #[derive(Serialize, Deserialize)]
@@ -304,7 +274,6 @@ fn now_secs() -> u64 {
         .unwrap_or(0)
 }
 
-/// 读取未过期的缓存索引（24h 内，且结构版本匹配）。
 pub fn load_cache() -> Option<UpdateIndex> {
     let path = storage::data_dir().join("update_cache.json");
     let text = std::fs::read_to_string(&path).ok()?;
@@ -319,8 +288,6 @@ pub fn load_cache() -> Option<UpdateIndex> {
     }
 }
 
-/// 写入缓存索引：与「仍有效（<24h）」的旧缓存按组件名合并，
-/// 只覆盖本次查到的组件，保留其余组件的上次结果（避免子集补查把其它组件冲掉）。
 pub fn save_cache(index: &UpdateIndex) {
     let path = storage::data_dir().join("update_cache.json");
     if let Some(dir) = path.parent() {
@@ -348,11 +315,6 @@ pub fn save_cache(index: &UpdateIndex) {
     }
 }
 
-// ----------------------------------------------------------------------------
-// 共享状态辅助
-// ----------------------------------------------------------------------------
-
-/// 读取某加载器已安装版本（作为比对基线）。
 pub fn last_version_of(settings: &Settings, t: UpdateTarget) -> Option<String> {
     match t {
         UpdateTarget::Kitten => settings.last_kitten_version.clone(),
@@ -361,10 +323,11 @@ pub fn last_version_of(settings: &Settings, t: UpdateTarget) -> Option<String> {
         UpdateTarget::AsiLoader => settings.last_asiloader_version.clone(),
         UpdateTarget::ShaderFix => settings.last_shaderfix_version.clone(),
         UpdateTarget::Awl => settings.last_awl_version.clone(),
+
+        UpdateTarget::Launcher => Some(crate::APP_VERSION.to_string()),
     }
 }
 
-    /// 写回某加载器已安装版本（安装成功后调用）。
 pub fn set_last_version(settings: &mut Settings, t: UpdateTarget, v: &str) {
     match t {
         UpdateTarget::Kitten => settings.last_kitten_version = Some(v.to_string()),
@@ -373,10 +336,11 @@ pub fn set_last_version(settings: &mut Settings, t: UpdateTarget, v: &str) {
         UpdateTarget::AsiLoader => settings.last_asiloader_version = Some(v.to_string()),
         UpdateTarget::ShaderFix => settings.last_shaderfix_version = Some(v.to_string()),
         UpdateTarget::Awl => settings.last_awl_version = Some(v.to_string()),
+
+        UpdateTarget::Launcher => {}
     }
 }
 
-/// 把 check 结果写入共享状态。
 pub fn apply_check(shared: &Arc<Mutex<UpdateStatus>>, results: HashMap<UpdateTarget, TargetStatus>) {
     if let Ok(mut s) = shared.lock() {
         for (t, ts) in results {
@@ -387,24 +351,6 @@ pub fn apply_check(shared: &Arc<Mutex<UpdateStatus>>, results: HashMap<UpdateTar
     }
 }
 
-/// 把所有加载器标记为「未配置」（源为空时）。
-/// 将单个组件标记为「未配置更新源」（该组件无默认仓库且未配置源时）。
-#[allow(dead_code)]
-pub fn mark_component_not_configured(shared: &Arc<Mutex<UpdateStatus>>, target: UpdateTarget) {
-    if let Ok(mut s) = shared.lock() {
-        if let Some(ts) = s.per_target.get_mut(&target) {
-            ts.state = UpdateState::NotConfigured;
-            ts.phase = UpdatePhase::Idle;
-            ts.url = None;
-            ts.remote_version = None;
-            ts.sha256 = None;
-            ts.mirrors.clear();
-            ts.detail = None;
-        }
-    }
-}
-
-/// 单组件比对：远端条目缺失（源返回非 200 / 查询失败）统一显示「暂无更新」。
 pub fn check_one(
     target: UpdateTarget,
     rel: Option<&LoaderRelease>,
@@ -444,11 +390,14 @@ pub fn check_one(
     }
 }
 
-/// 比对远端索引与各加载器本地基线，产出完整 TargetStatus。
-/// 索引缺失的组件 = 其更新源返回非 200 / 查询失败，统一显示「暂无更新」。
 pub fn check_updates(index: &UpdateIndex, settings: &Settings) -> HashMap<UpdateTarget, TargetStatus> {
     let mut map = HashMap::new();
     for &target in ALL_TARGETS.iter() {
+
+        if !target.has_update_source() {
+            map.insert(target, TargetStatus::default());
+            continue;
+        }
         let remote = index
             .loaders
             .iter()
@@ -458,17 +407,8 @@ pub fn check_updates(index: &UpdateIndex, settings: &Settings) -> HashMap<Update
     map
 }
 
-// ----------------------------------------------------------------------------
-// 网络（原生 WinHTTP，零额外下载依赖）
-// ----------------------------------------------------------------------------
-
-/// 所有请求统一附加的头。api.github.com 缺失 User-Agent 直接 403；
-/// 用通用浏览器 UA 对各托管平台与 CDN 兼容性最好。必须以 \r\n 结尾。
 const HTTP_HEADERS: &str = "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36\r\n";
 
-// windows-rs 的安全绑定把头字符串长度按「字符数」传下去，而 WinHTTP 的
-// WinHttpAddRequestHeaders 实际按「字节数」解析（字符数会把头截断，直接报 87 参数错误）。
-// 实测长度传 -1（由系统按 null 结尾自行计算）可用，因此声明原始符号绕过绑定。
 #[link(name = "winhttp")]
 unsafe extern "system" {
     #[link_name = "WinHttpAddRequestHeaders"]
@@ -480,9 +420,6 @@ unsafe extern "system" {
     ) -> i32;
 }
 
-/// 可中止句柄组：登记一次请求的 session/connect/request 句柄，
-/// 取消方关闭句柄使另一线程中阻塞的 WinHTTP 调用立即失败（标准中止手法）。
-/// 句柄以 usize 存放以保证 Send。
 #[derive(Default)]
 pub struct HttpAbort {
     handles: std::sync::Mutex<Vec<usize>>,
@@ -494,12 +431,15 @@ impl HttpAbort {
     }
 
     fn register(&self, handle: *mut core::ffi::c_void) {
-        self.handles.lock().unwrap().push(handle as usize);
+
+        self.handles
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .push(handle as usize);
     }
 
-    /// 关闭当前登记的全部句柄；谁先取走谁负责关闭，另一方拿到空表（不会重复关闭）。
     pub fn close_all(&self) {
-        for h in std::mem::take(&mut *self.handles.lock().unwrap()) {
+        for h in std::mem::take(&mut *self.handles.lock().unwrap_or_else(|e| e.into_inner())) {
             unsafe {
                 let _ = WinHttpCloseHandle(h as *mut core::ffi::c_void);
             }
@@ -507,7 +447,6 @@ impl HttpAbort {
     }
 }
 
-/// 解析 http/https URL → (host, port, path, secure)。
 fn parse_url(url: &str) -> Result<(String, u16, String, bool), String> {
     let url = url.trim();
     let (secure, rest) = if let Some(r) = url.strip_prefix("https://") {
@@ -557,11 +496,6 @@ fn query_number(request: *mut core::ffi::c_void, flag: u32) -> Option<u32> {
     }
 }
 
-/// 打开会话/连接/请求，发送并接收响应，校验 2xx 后把请求句柄交给 `f`。
-/// `f` 负责读取响应体（GET 已自动跟随重定向）。
-/// `connect_timeout` 单独控制建连（DNS/TLS）超时：检查路径收紧以快速淘汰不可达源；
-/// 下载路径等满 `timeout`。
-/// `abort` 提供时登记全部句柄，取消方关闭句柄可使阻塞中的调用立即失败。
 fn with_http<F>(
     url: &str,
     timeout: Duration,
@@ -573,11 +507,10 @@ where
     F: FnOnce(*mut core::ffi::c_void, Option<u64>) -> Result<(), String>,
 {
     let (host, port, path, secure) = parse_url(url)?;
-    // 用域名直连（SNI = 真实域名，证书校验才正确）；
-    // IPv6 黑洞由 WINHTTP_OPTION_IPV6_FAST_FALLBACK 处理：连不上 IPv6 时秒回退 IPv4。
+
     let connect_host = host.clone();
     unsafe {
-        // 强制直连：不使用任何系统/显式代理
+
         let session = WinHttpOpen(
             PCWSTR::null(),
             WINHTTP_ACCESS_TYPE_NO_PROXY,
@@ -585,8 +518,7 @@ where
             PCWSTR::null(),
             0,
         );
-        // IPv6 快速回退（Happy Eyeballs）：某些更新源（如 gitea.tendokyu.moe）的 IPv6
-        // 在特定网络是黑洞，会卡满建连；开启后连不上 IPv6 立即回退 IPv4，且 SNI 仍用真实域名。
+
         let ipv6_fb: u32 = 1;
         let ipv6_fb_bytes = ipv6_fb.to_ne_bytes();
         let _ = WinHttpSetOption(
@@ -655,7 +587,7 @@ where
         if let Some(a) = abort {
             a.register(request);
         }
-        // 自动跟随重定向（含 https→https）
+
         let policy: u32 = WINHTTP_OPTION_REDIRECT_POLICY_ALWAYS;
         let policy_bytes = policy.to_ne_bytes();
         let _ = WinHttpSetOption(
@@ -663,14 +595,14 @@ where
             WINHTTP_OPTION_REDIRECT_POLICY,
             Some(&policy_bytes),
         );
-        // 直连 IPv4 时证书 CN 是域名而非 IP，跳过 CN 名校验（证书链/CA 仍校验）
+
         let sec: u32 = SECURITY_FLAG_IGNORE_CERT_CN_INVALID;
         let sec_bytes = sec.to_ne_bytes();
         let _ = WinHttpSetOption(Some(request), WINHTTP_OPTION_SECURITY_FLAGS, Some(&sec_bytes));
         let result = (|| -> Result<(), String> {
             let headers = crate::win_util::to_wide_null(HTTP_HEADERS);
             let ok = raw_add_request_headers(request, headers.as_ptr(), (-1i32) as u32, WINHTTP_ADDREQ_FLAG_ADD);
-            // connect 用的是 IPv4，需把 Host 改写为真实域名（否则 github/gitcode 等按 Host 路由会 404）
+
             let host_hdr = crate::win_util::to_wide_null(&format!("Host: {host}"));
             let _ = raw_add_request_headers(
                 request,
@@ -705,7 +637,7 @@ where
             .map(|v| v as u64);
             f(request, total)
         })();
-        // 清理：有 abort 时统一走注册表（取消方可能已提前关闭并取走句柄）
+
         if let Some(a) = abort {
             a.close_all();
         } else {
@@ -717,7 +649,6 @@ where
     }
 }
 
-/// 读取响应体到 `out`。
 fn read_body(request: *mut core::ffi::c_void, out: &mut Vec<u8>) -> Result<(), String> {
     loop {
         let mut avail: u32 = 0;
@@ -750,7 +681,6 @@ fn read_body(request: *mut core::ffi::c_void, out: &mut Vec<u8>) -> Result<(), S
     Ok(())
 }
 
-/// 读取响应体到文件并上报下载进度；`cancel` 置位即中止。
 fn read_body_to_file(
     request: *mut core::ffi::c_void,
     file: &mut std::fs::File,
@@ -794,16 +724,13 @@ fn read_body_to_file(
         written += read as u64;
         on_progress(written, total.unwrap_or(0));
     }
-    // 读循环因句柄被关闭/读错误退出时，归因为取消
+
     if cancel.load(Ordering::Relaxed) {
         return Err(t!("已取消更新", "Update cancelled").to_string());
     }
     Ok(())
 }
 
-/// 把仓库地址转换为 Release 查询地址。
-/// 支持 github.com / gitcode.com / gitea.tendokyu.moe（含 www），容忍尾部 `/`、`.git`、
-/// `/releases`、`/releases/latest`；`/releases/tag/<tag>` 锁定指定版本（改调 tags 端点）。
 pub fn repo_api_url(src: &str) -> Result<String, String> {
     let err = || {
         t!(
@@ -822,20 +749,18 @@ pub fn repo_api_url(src: &str) -> Result<String, String> {
         None => (rest, ""),
     };
     let host = host.trim_start_matches("www.");
-    // (API 基址, releases 子路径)：三个平台都支持 /releases/latest 单对象端点
-    // （GitCode 实测同样可用，返回 release_status="latest" 的那一条）；
-    // parse_releases 仍兼容数组形态，供 Gitea 等只提供数组端点的平台使用。
+
     let (api_base, suffix) = match host {
         "github.com" => ("https://api.github.com/repos", "/releases/latest"),
         "gitcode.com" => ("https://api.gitcode.com/api/v5/repos", "/releases/latest"),
-        // Gitea 实例（API 与 Gitee v5 同构，且支持 /releases/latest）
+
         "gitea.tendokyu.moe" => ("https://gitea.tendokyu.moe/api/v1/repos", "/releases/latest"),
         _ => return Err(err()),
     };
     if path.is_empty() {
         return Err(err());
     }
-    // /owner/repo/releases/tag/<tag> → 锁定 tag
+
     if let Some(idx) = path.find("/releases/tag/") {
         let tag = path[idx + "/releases/tag/".len()..].trim_matches('/');
         let owner_repo = &path[..idx];
@@ -844,7 +769,7 @@ pub fn repo_api_url(src: &str) -> Result<String, String> {
         }
         return Ok(format!("{api_base}/{owner_repo}/releases/tags/{tag}"));
     }
-    // 剥可选后缀（各只剥一次）
+
     let mut p = path;
     if let Some(s) = p.strip_suffix("/releases/latest") {
         p = s;
@@ -861,14 +786,11 @@ pub fn repo_api_url(src: &str) -> Result<String, String> {
     Ok(format!("{api_base}/{p}{suffix}"))
 }
 
-/// 校验路径形如 /{owner}/{repo} 且两段均非空。
 fn is_owner_repo(path: &str) -> bool {
     let segs: Vec<&str> = path.split('/').filter(|s| !s.is_empty()).collect();
     segs.len() == 2
 }
 
-/// 从资产文件名提取内嵌版本：kitten1.4.2.zip / kitten-1.4.2.zip / kitten_v1.4.2.zip → "1.4.2"；
-/// 固定名（kitten.zip）→ None，由调用方回退到 tag。
 fn version_from_asset_name(asset_name: &str, loader: &str) -> Option<String> {
     let base = asset_name.strip_suffix(".zip")?;
     let rest = base.strip_prefix(loader)?;
@@ -884,9 +806,6 @@ fn version_from_asset_name(asset_name: &str, loader: &str) -> Option<String> {
     }
 }
 
-/// 把 Release 响应转换为加载器更新条目；没有任何可识别的 kitten/mice 资产时报错
-/// （而不是静默返回空，避免界面误显示「已是最新」）。
-/// 解析 Release 中匹配指定组件的资产（取第一个命中）。
 fn release_to_loader_for(
     rel: &ReleaseInfo,
     target: UpdateTarget,
@@ -915,15 +834,6 @@ fn release_to_loader_for(
     .to_string())
 }
 
-/// 解析 Release 响应文本，返回按「新 → 旧」排序的候选列表。
-///
-/// 兼容两种响应形态：
-/// - 单对象（GitHub / GitCode / Gitea 的 `/releases/latest`）→ 单元素列表；
-/// - 数组（平台的 `/releases` 列表端点）→ 排序后返回。
-///
-/// 数组形态**不能**直接取首个：GitCode 的 `/releases` 按发布时间**升序**返回，
-/// 首个是最旧的一条（曾导致 kittentools 永远停在 1.0.0.0）。排序判据优先级：
-/// `release_status == "latest"` → `created_at` 最大 → 保持原顺序末位优先（升序时末位即最新）。
 fn parse_releases(text: &str) -> Result<Vec<ReleaseInfo>, String> {
     if let Ok(rel) = serde_json::from_str::<ReleaseInfo>(text) {
         return Ok(vec![rel]);
@@ -938,15 +848,14 @@ fn parse_releases(text: &str) -> Result<Vec<ReleaseInfo>, String> {
     Ok(rels)
 }
 
-/// 就地把 Release 列表排成「新 → 旧」（见 [`parse_releases`]）。
 fn sort_releases_newest_first(rels: &mut Vec<ReleaseInfo>) {
     let is_latest = |r: &ReleaseInfo| r.release_status.as_deref() == Some("latest");
-    // 判据 1：平台显式标记的最新条目（GitCode 的 release_status = "latest"）
+
     if rels.iter().any(|r| is_latest(r)) {
         rels.sort_by(|a, b| is_latest(b).cmp(&is_latest(a)));
         return;
     }
-    // 判据 2：创建时间倒序（ISO8601，同一平台时区偏移一致时字典序即时间序）
+
     if rels.iter().any(|r| r.created_at.is_some()) {
         rels.sort_by(|a, b| {
             b.created_at
@@ -956,11 +865,10 @@ fn sort_releases_newest_first(rels: &mut Vec<ReleaseInfo>) {
         });
         return;
     }
-    // 判据 3：无任何时间信息时，升序返回的末位即最新
+
     rels.reverse();
 }
 
-/// 拉取仓库 Release，返回按「新 → 旧」排序的候选列表（`parse_releases`）。
 fn fetch_latest_release(
     api_url: &str,
     abort: Option<&HttpAbort>,
@@ -969,8 +877,6 @@ fn fetch_latest_release(
     parse_releases(&text)
 }
 
-/// 从候选 Release（新 → 旧）中解析出指定组件的更新条目：
-/// 取**第一个含匹配资产**的 Release，最新一条没有对应 zip 时回退到更早的一条。
 fn loader_from_candidates(
     rels: &[ReleaseInfo],
     target: UpdateTarget,
@@ -989,27 +895,18 @@ fn loader_from_candidates(
     Err(last_err)
 }
 
-/// 按界面语言为组件选定**唯一**更新源：
-/// 中文优先 GitCode（国内直连快），英文优先 GitHub；都无命中时用列表第一个。
-/// 选定的源返回非 200 / 网络失败时统一按「暂无更新」处理，**不再轮询其他镜像源**。
-fn select_repo(target: UpdateTarget, lang: Lang) -> &'static str {
+fn select_repo(target: UpdateTarget, lang: Lang) -> Option<&'static str> {
     let repos = target.default_repos();
     let pick = |host: &str| repos.iter().find(|r| r.contains(host)).copied();
     match lang {
         Lang::Zh => pick("gitcode.com").or_else(|| repos.first().copied()),
         Lang::En => pick("github.com").or_else(|| repos.first().copied()),
     }
-    .unwrap_or("https://github.com")
+
 }
 
-/// 更新检查的全局硬期限：超期未返回的组件按「暂无更新」收尾，不再等待。
 const CHECK_DEADLINE: Duration = Duration::from_secs(15);
 
-/// 并行拉取 `targets` 各组件（语言选定的）更新源的最新 Release，结果**就绪即回调**：
-/// 成功 → `on_result(target, Some(rel))`；源返回非 200 / 查询失败 → `on_result(target, None)`
-/// （`check_one` 统一按「暂无更新」处理），不轮询其他镜像源。
-/// 整体受 [`CHECK_DEADLINE`] 硬期限约束，超期未返回的组件以 None 回调收尾。
-/// 全量检查传入 [`ALL_TARGETS`]；缓存命中后补查缺失组件时只传缺失子集。
 pub fn fetch_updates_for(
     targets: &[UpdateTarget],
     on_result: &mut dyn FnMut(UpdateTarget, Option<LoaderRelease>),
@@ -1018,15 +915,14 @@ pub fn fetch_updates_for(
     use std::time::Instant;
 
     let lang = i18n::current();
-    // 查询作业：每个组件一个（语言选定的）仓库。
+
     let jobs: Vec<(UpdateTarget, String)> = targets
         .iter()
-        .map(|&t| (t, select_repo(t, lang).to_string()))
+        .filter_map(|&t| select_repo(t, lang).map(|repo| (t, repo.to_string())))
         .collect();
 
     let (tx, rx) = mpsc::channel::<(UpdateTarget, Option<LoaderRelease>)>();
-    // 每个作业独立的 abort：期限到达时统一关闭句柄，掐断在途请求。
-    // 不共享单个 abort：with_http 收尾会 close_all 取走全部句柄，会误杀其他在途请求。
+
     let aborts: Vec<std::sync::Arc<HttpAbort>> = (0..jobs.len())
         .map(|_| std::sync::Arc::new(HttpAbort::new()))
         .collect();
@@ -1055,7 +951,7 @@ pub fn fetch_updates_for(
             Err(_) => break,
         }
     }
-    // 期限到达 / 全部就绪：掐断剩余在途请求
+
     for a in &aborts {
         a.close_all();
     }
@@ -1066,8 +962,7 @@ fn http_get_text(
     abort: Option<&HttpAbort>,
 ) -> Result<String, String> {
     let mut body = Vec::new();
-    // 读 15s / 建连 10s：API 响应体很小，建连超时收紧可快速淘汰不可达源；
-    // 但给慢源（gitea.tendokyu.moe 等）留足建连时间，避免误杀
+
     with_http(
         url,
         Duration::from_secs(15),
@@ -1079,8 +974,6 @@ fn http_get_text(
         .map_err(|_| t!("响应不是合法 UTF-8", "Response is not valid UTF-8").to_string())
 }
 
-/// 下载 URL（失败自动切换 mirrors）到本地文件，过程上报进度；`cancel` 置位
-/// 或 `abort` 关闭句柄即中止。
 fn http_download_to_file(
     primary_url: &str,
     mirrors: &[String],
@@ -1104,7 +997,7 @@ fn http_download_to_file(
             last_err = t!("已取消更新", "Update cancelled").to_string();
             break;
         }
-        // 下载路径：读 / 建连都等满 30s（慢源必须给足时间）
+
         match with_http(
             url,
             Duration::from_secs(30),
@@ -1146,11 +1039,6 @@ fn sha256_of_file(path: &Path) -> Result<String, String> {
     Ok(format!("{:x}", digest))
 }
 
-// ----------------------------------------------------------------------------
-// 解压 + 整目录替换 + 回滚
-// ----------------------------------------------------------------------------
-
-/// 若 zip 内仅含单一顶层目录，返回该目录（剥一层），否则返回解压根。
 fn strip_top_dir(dir: &Path) -> PathBuf {
     if let Ok(mut entries) = std::fs::read_dir(dir) {
         let first = entries.next().and_then(|e| e.ok());
@@ -1163,7 +1051,6 @@ fn strip_top_dir(dir: &Path) -> PathBuf {
     dir.to_path_buf()
 }
 
-/// 递归移动目录（同卷 rename，跨卷回退到拷贝）。
 fn move_dir(src: &Path, dst: &Path) -> std::io::Result<()> {
     if std::fs::rename(src, dst).is_ok() {
         return Ok(());
@@ -1187,7 +1074,6 @@ fn copy_dir(src: &Path, dst: &Path) -> std::io::Result<()> {
     Ok(())
 }
 
-/// 解压 zip 到 out_dir，并上报解压进度；`cancel` 置位即中止。
 fn extract_zip(
     zip_path: &Path,
     out_dir: &Path,
@@ -1226,10 +1112,6 @@ fn extract_zip(
     Ok(())
 }
 
-/// 把已下载的 zip 安装到 `base_dir/<target.dir_name()/>`：备份旧目录、整体替换、失败回滚。
-/// 解压与替换前检查 `cancel`；替换一旦开始（重命名级，耗时极短）不再中断。
-/// 注意：本函数开头会清空重建 `base_dir/.__update_{loader}` 临时目录，
-/// 因此 `zip_path` 必须位于该目录之外（download_and_install 使用同级 `.__update_{loader}.zip`）。
 pub fn install_zip(
     zip_path: &Path,
     base_dir: &Path,
@@ -1252,7 +1134,6 @@ pub fn install_zip(
     })?;
     let _ = std::fs::remove_file(zip_path);
 
-    // 替换前的最后取消点
     if cancel.load(Ordering::Relaxed) {
         let _ = std::fs::remove_dir_all(&tmp_extract);
         return Err(t!("已取消更新", "Update cancelled").to_string());
@@ -1271,7 +1152,7 @@ pub fn install_zip(
 
     progress(UpdatePhase::Installing, 0, 0);
     move_dir(&content_root, &target_dir).map_err(|e| {
-        // 回滚
+
         let _ = std::fs::remove_dir_all(&target_dir);
         if backup.exists() {
             let _ = std::fs::rename(&backup, &target_dir);
@@ -1286,8 +1167,6 @@ pub fn install_zip(
     Ok(())
 }
 
-/// 完整流程：下载（含可选 sha256 校验）→ 整目录安装。
-/// `cancel` 置位或 `abort.close_all()`（关闭阻塞中的网络句柄）即中止。
 pub fn download_and_install(
     target: UpdateTarget,
     primary_url: &str,
@@ -1300,8 +1179,7 @@ pub fn download_and_install(
 ) -> Result<(), String> {
     use std::sync::atomic::Ordering;
     progress(UpdatePhase::Downloading, 0, 0);
-    // 解压临时目录会在 install_zip 开头被整体清空重建，
-    // 因此 zip 必须放在该目录之外（同级文件），否则解压前就被删掉
+
     let tmp_extract = base_dir.join(format!(".__update_{}", target.dir_name()));
     let zip_path = base_dir.join(format!(".__update_{}.zip", target.dir_name()));
     let _ = std::fs::remove_dir_all(&tmp_extract);
@@ -1337,7 +1215,6 @@ pub fn download_and_install(
         }
     }
 
-    // install_zip 内部解压后自行删除 zip 并清理临时目录；失败时此处兜底删 zip
     let r = install_zip(&zip_path, base_dir, target, cancel, progress);
     if r.is_err() {
         let _ = std::fs::remove_file(&zip_path);
@@ -1345,7 +1222,6 @@ pub fn download_and_install(
     r
 }
 
-/// 工具：返回加载器目录基址 `launcher/tools`。
 pub fn tools_dir() -> PathBuf {
     launcher_dir().join("tools")
 }
@@ -1373,56 +1249,74 @@ mod tests {
                 sha256: None,
             }],
         };
-        // 未安装过任何版本 → 有更新（提示可升级）
+
         let mut settings = Settings::default();
         let r = check_updates(&index, &settings);
         assert_eq!(
             r[&UpdateTarget::Kitten].state,
             UpdateState::Outdated
         );
-        // mice 不在索引中（其更新源返回非 200 / 失败）→ 统一显示「暂无更新」
+
         assert_eq!(r[&UpdateTarget::Mice].state, UpdateState::UpToDate);
         assert_eq!(r[&UpdateTarget::Mice].detail.as_deref(), Some("暂无更新"));
 
-        // 已安装 kitten 1.5.0 → 已最新
         settings.last_kitten_version = Some("1.5.0".into());
         let r2 = check_updates(&index, &settings);
         assert_eq!(r2[&UpdateTarget::Kitten].state, UpdateState::UpToDate);
 
-        // 已安装 kitten 1.4.0（远端更新）→ 有更新
         settings.last_kitten_version = Some("1.4.0".into());
         let r3 = check_updates(&index, &settings);
         assert_eq!(r3[&UpdateTarget::Kitten].state, UpdateState::Outdated);
     }
 
     #[test]
+    fn launcher_component_has_no_source_yet() {
+
+        assert!(ALL_TARGETS.contains(&UpdateTarget::Launcher));
+        assert!(!UpdateTarget::Launcher.has_update_source());
+        let r = check_updates(&UpdateIndex::default(), &Settings::default());
+        assert_eq!(
+            r[&UpdateTarget::Launcher].state,
+            UpdateState::NotConfigured
+        );
+
+        assert_eq!(
+            last_version_of(&Settings::default(), UpdateTarget::Launcher).as_deref(),
+            Some(crate::APP_VERSION)
+        );
+    }
+
+    #[test]
     fn select_repo_by_language() {
-        // 中文 → GitCode；英文 → GitHub；只有单源的组件不受语言影响
+
         let zh = i18n::Lang::Zh;
         let en = i18n::Lang::En;
         assert_eq!(
             select_repo(UpdateTarget::Kitten, zh),
-            "https://gitcode.com/project-sasayaki/kittentools"
+            Some("https://gitcode.com/project-sasayaki/kittentools")
         );
         assert_eq!(
             select_repo(UpdateTarget::Kitten, en),
-            "https://github.com/project-sasayaki/kittentools"
+            Some("https://github.com/project-sasayaki/kittentools")
         );
-        // shaderfix 仅有 tendokyu 单源，语言不影响
+
         assert_eq!(
             select_repo(UpdateTarget::ShaderFix, zh),
-            "https://gitea.tendokyu.moe/puniru/shaderfix-idas"
+            Some("https://gitea.tendokyu.moe/puniru/shaderfix-idas")
         );
         assert_eq!(
             select_repo(UpdateTarget::ShaderFix, en),
-            "https://gitea.tendokyu.moe/puniru/shaderfix-idas"
+            Some("https://gitea.tendokyu.moe/puniru/shaderfix-idas")
         );
+
+        assert_eq!(select_repo(UpdateTarget::Launcher, zh), None);
+        assert_eq!(select_repo(UpdateTarget::Launcher, en), None);
     }
 
     #[test]
     fn repo_api_url_variants() {
         let err_of = |s: &str| repo_api_url(s).unwrap_err();
-        // 常规形态
+
         assert_eq!(
             repo_api_url("https://github.com/a/b").unwrap(),
             "https://api.github.com/repos/a/b/releases/latest"
@@ -1447,12 +1341,12 @@ mod tests {
             repo_api_url("https://gitcode.com/a/b").unwrap(),
             "https://api.gitcode.com/api/v5/repos/a/b/releases/latest"
         );
-        // 锁定 tag
+
         assert_eq!(
             repo_api_url("https://github.com/a/b/releases/tag/v1.4.2").unwrap(),
             "https://api.github.com/repos/a/b/releases/tags/v1.4.2"
         );
-        // 非法输入
+
         assert!(err_of("https://gitlab.com/a/b").contains("GitHub"));
         assert!(err_of("github.com/a/b").contains("GitHub"));
         assert!(err_of("https://github.com/a").contains("GitHub"));
@@ -1460,7 +1354,6 @@ mod tests {
         assert!(err_of("https://github.com/a/b/releases/tag/").contains("GitHub"));
     }
 
-    /// GitCode `/releases/latest` 的单对象响应。
     const GITCODE_LATEST_JSON: &str = r#"{
         "tag_name": "1.0.1.0",
         "created_at": "2026-10-11T10:56:09+08:00",
@@ -1471,7 +1364,6 @@ mod tests {
         ]
     }"#;
 
-    /// GitCode `/releases` 的数组响应（**升序**：最旧在前）。
     const GITCODE_ARRAY_JSON: &str = r#"[
         {
             "tag_name": "1.0.0.0",
@@ -1500,7 +1392,7 @@ mod tests {
 
     #[test]
     fn parse_releases_picks_newest_from_ascending_array() {
-        // GitCode 的 /releases 按发布时间升序，取首个会拿到最旧的 1.0.0.0
+
         let rels = parse_releases(GITCODE_ARRAY_JSON).unwrap();
         assert_eq!(rels[0].tag_name, "1.0.1.0");
         assert_eq!(rels[1].tag_name, "1.0.0.0");
@@ -1508,7 +1400,7 @@ mod tests {
 
     #[test]
     fn parse_releases_falls_back_to_created_at_and_tail() {
-        // 无 release_status 标记时按 created_at 取最新
+
         let by_time = r#"[
             {"tag_name": "v1", "created_at": "2026-01-01T00:00:00+08:00", "assets": []},
             {"tag_name": "v3", "created_at": "2026-03-01T00:00:00+08:00", "assets": []},
@@ -1517,7 +1409,6 @@ mod tests {
         let rels = parse_releases(by_time).unwrap();
         assert_eq!(rels[0].tag_name, "v3");
 
-        // 完全没有时间信息时，升序数组的末位即最新
         let no_time = r#"[
             {"tag_name": "v1", "assets": []},
             {"tag_name": "v2", "assets": []}
@@ -1525,7 +1416,6 @@ mod tests {
         let rels = parse_releases(no_time).unwrap();
         assert_eq!(rels[0].tag_name, "v2");
 
-        // 空数组 / 非法结构 → Err
         assert!(parse_releases("[]").is_err());
         assert!(parse_releases("not json").is_err());
     }
@@ -1543,7 +1433,7 @@ mod tests {
 
     #[test]
     fn loader_from_candidates_skips_release_without_asset() {
-        // 最新一条没有 kitten.zip（只有源码归档），应回退到更早那条含资产的
+
         let json = r#"[
             {
                 "tag_name": "1.0.0.0",
@@ -1560,13 +1450,12 @@ mod tests {
         let l = loader_from_candidates(&rels, UpdateTarget::Kitten).unwrap();
         assert_eq!(l.version, "1.0.0.0");
 
-        // 全部都没有匹配资产 → Err
         assert!(loader_from_candidates(&rels, UpdateTarget::Mice).is_err());
     }
 
     #[test]
     fn cache_schema_invalidates_files_written_by_older_builds() {
-        // 旧版本写入的缓存没有 schema 字段 → 反序列化为 0，判为失效
+
         let old = format!(
             r#"{{"saved_at": {}, "index": {{"loaders": [{{"name": "kitten", "version": "1.0.0.0", "url": "https://x/k.zip", "sha256": null}}]}}}}"#,
             now_secs()
@@ -1574,7 +1463,6 @@ mod tests {
         let c: CacheFile = serde_json::from_str(&old).unwrap();
         assert_ne!(c.schema, CACHE_SCHEMA);
 
-        // 当前结构写入后 schema 保留
         let cur = CacheFile {
             schema: CACHE_SCHEMA,
             saved_at: now_secs(),
@@ -1595,7 +1483,6 @@ mod tests {
         std::fs::create_dir_all(&target_dir).unwrap();
         std::fs::write(target_dir.join("old.txt"), b"old").unwrap();
 
-        // 构建一个 kitten.zip（含单一顶层 kitten/ 目录）
         let zip_path = tmp.join("kitten.zip");
         {
             use std::io::Write;
@@ -1613,7 +1500,7 @@ mod tests {
 
         assert!(target_dir.join("new.txt").exists());
         assert!(!target_dir.join("old.txt").exists());
-        // 备份目录应已清理
+
         assert!(!base.join(".kitten.old").exists());
 
         let _ = std::fs::remove_dir_all(&tmp);

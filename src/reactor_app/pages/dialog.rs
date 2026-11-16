@@ -1,4 +1,3 @@
-//! 弹窗渲染与弹窗确认后的入库 / 移除等应用。
 use windows_reactor::*;
 
 use crate::detect::FileKind;
@@ -71,7 +70,7 @@ impl Launcher {
                                     label
                                 ))
                                 .text_wrapping(TextWrapping::Wrap),
-                            // 倒计时进度条：起始满格，10 秒后归零
+
                             ProgressBar::new()
                                 .width(320.0)
                                 .minimum(0.0)
@@ -82,6 +81,28 @@ impl Launcher {
                                 .font_size(12.0)
                                 .opacity(0.6),
                         )),
+                    )
+                    .into()
+            }
+            Dialog::DeviceDiagnostics { text } => {
+                let body = if text.is_empty() {
+                    t!("尚无扫描结果：请先点右上角「扫描设备」再打开此窗口。", "No scan result yet: click \"Scan\" at top right first.")
+                        .to_string()
+                } else {
+                    text.clone()
+                };
+                ContentDialog::new()
+                    .title(t!("设备名诊断", "Device name diagnostics"))
+                    .primary_button_text(t!("知道了", "OK"))
+                    .is_open(true)
+                    .on_closed(context.callback(Message::DialogClosed))
+                    .content(
+
+                        TextBox::new()
+                            .text(body)
+                            .accepts_return(true)
+                            .height(260.0)
+                            .min_width(520.0),
                     )
                     .into()
             }
@@ -106,8 +127,7 @@ impl Launcher {
                 )
                 .into(),
             Dialog::LaunchFailed { message, goto } => {
-                // 带跳转目标：主按钮「前往设置」、关闭按钮「取消」；
-                // 普通错误：仅一个主按钮「知道了」
+
                 let (primary, close) = match goto {
                     Some(_) => (t!("前往设置", "Go to settings"), Some(t!("取消", "Cancel"))),
                     None => (t!("知道了", "OK"), None),
@@ -252,7 +272,7 @@ impl Launcher {
                 self.room_start_join(room_id, password, context);
             }
             Dialog::RoomNickPrompt { .. } => {
-                // 主按钮「前往设置」：转设置页（跳过走 DialogClosed 非主键分支）
+
                 self.dialog = Dialog::None;
                 self.nav_tag = "settings".to_string();
             }
@@ -263,12 +283,11 @@ impl Launcher {
                     return;
                 }
                 if let Some(add) = self.pending.take() {
-                    let PendingAdd { path, ir, reader } = add;
+                    let PendingAdd { path, ir } = add;
                     let loader = match ir.kind {
                         FileKind::Elf32 => Loader::Kitten,
                         _ => Loader::Mice,
                     };
-                    let reader_path = reader.as_ref().map(|(p, _)| p.display().to_string());
                     self.library.games.push(GameRecord {
                         id: make_id(),
                         path: path.display().to_string(),
@@ -282,12 +301,13 @@ impl Launcher {
                         image: None,
                         cover: None,
                         serverbox: None,
-                        reader: reader_path,
+                        reader: None,
                         amdaemon: None,
                         game_exe: None,
             gfx_patch: None,
                         test_mode: None,
                         card: None,
+                        region: None,
                         play_count: 0,
                         last_played: None,
                         added_at: now_secs(),
@@ -300,41 +320,41 @@ impl Launcher {
                     let g = self.library.games.remove(index);
                     self.store.remove_image(&g.id);
                     self.store.save_library(&self.library);
-                    // 列表下标已变动：收起行下拉卡片，避免指向另一款游戏
+
                     self.drop_index = None;
                     self.drop_open = false;
                 }
             }
             Dialog::UpdateAvailable { .. } => {
-                // 「前往设置」：跳转设置页并重置提醒标记（之后有新版本会再次提醒）
+
                 self.nav_tag = "settings".to_string();
                 self.update_prompt_key = None;
             }
             Dialog::LaunchFailed { goto, .. } => {
-                // 主按钮「前往设置」：根据启动前检查失败项跳转到对应配置页
+
                 if let Some((tag, idx)) = goto {
                     self.nav_tag = tag.clone();
                     if let Some(i) = idx {
                         match tag.as_str() {
-                            // 车卡：复用 enter_cards 进入卡片选择页（含扫描 / 缓存逻辑）
+
                             "cards" => self.enter_cards(i, context),
-                            // ServerBox / amdaemon / 游戏主程序：展开该游戏行下拉卡片
+
                             "games" => {
                                 self.drop_index = Some(i);
                                 self.drop_open = true;
                                 self.drop_anim = 1.0;
                             }
-                            // 其余（system / network / input 等）：仅切换导航页
+
                             _ => {}
                         }
                     }
                 }
             }
+            Dialog::DeviceDiagnostics { .. } => {}
             _ => {}
         }
     }
 
-    /// 从行菜单「添加/更换 ServerBox / 读卡器」打开文件对话框（后台线程，避免阻塞 UI）。
     pub(in crate::reactor_app) fn pick_companion(&self, context: &ComponentContext<Self>, kind: CompanionKind, index: usize) {
         let exe_pairs = || {
             vec![

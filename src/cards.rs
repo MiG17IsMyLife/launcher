@@ -1,6 +1,3 @@
-//! IDAS 驾照卡：游戏目录内含 INID 数据块的 PNG 即为卡图（透明打印层）。
-//! 本模块只扫描卡图，不读取/写入任何加载器配置文件；选用的卡片保存在启动器自己的 config.ini。
-
 use std::fs;
 use std::io::{Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
@@ -8,14 +5,14 @@ use std::path::{Path, PathBuf};
 #[derive(Clone, Debug)]
 pub struct CardEntry {
     pub path: PathBuf,
-    /// 文件名主干（不含扩展名），作为选用卡片保存到启动器 config.ini 的值
+
     pub name: String,
 }
 
 #[derive(Clone, Debug, Default)]
 pub struct CardScan {
     pub cards: Vec<CardEntry>,
-    /// 当前选用的卡（主干名，来自启动器 config.ini）
+
     pub active: Option<String>,
 }
 
@@ -28,7 +25,6 @@ impl CardScan {
     }
 }
 
-/// PNG 是否含 INID 块（2048 字节卡数据）。按块头跳读，不加载整图。
 fn has_inid_chunk(path: &Path) -> bool {
     let Ok(mut f) = fs::File::open(path) else {
         return false;
@@ -57,7 +53,6 @@ fn has_inid_chunk(path: &Path) -> bool {
     }
 }
 
-/// 从游戏文件所在目录向下（≤3 层、≤512 个目录）扫描卡图（含 INID 块的 PNG）。
 pub fn scan_cards(game_file: &Path) -> CardScan {
     let root = game_file
         .parent()
@@ -102,12 +97,6 @@ pub fn scan_cards(game_file: &Path) -> CardScan {
     scan
 }
 
-// ---------------------------------------------------------------------------
-// aime 卡（segatools：SDDF / SDER / SDGT）——amdaemon 目录 DEVICE\ 下的 20 位数字 .txt
-// ---------------------------------------------------------------------------
-
-/// access code 展示格式：每 4 位一组、组间加空格
-/// （`"12345678901234567890"` → `"1234 5678 9012 3456 7890"`）。
 pub fn format_access_code(code: &str) -> String {
     let digits: Vec<char> = code.chars().collect();
     digits
@@ -117,8 +106,6 @@ pub fn format_access_code(code: &str) -> String {
         .join(" ")
 }
 
-/// 生成一个 20 位 access code（aime 惯例首位为 5）：时间纳秒 + 原子计数器
-/// 混合的 xorshift 伪随机，线程安全。
 fn gen_access_code() -> String {
     use std::sync::atomic::{AtomicU64, Ordering};
     static SEQ: AtomicU64 = AtomicU64::new(0);
@@ -142,8 +129,6 @@ fn gen_access_code() -> String {
     code
 }
 
-/// 空白车卡的 cardfile 名：`InidCrdXXXXX.png`（XXXXX 为 5 位随机数字，
-/// 对应游戏目录内置的空白卡模板），选中后由启动器写入 idas.ini 的 cardfile。
 pub fn blank_card_name() -> String {
     use std::sync::atomic::{AtomicU64, Ordering};
     static SEQ: AtomicU64 = AtomicU64::new(0);
@@ -162,8 +147,6 @@ pub fn blank_card_name() -> String {
     format!("InidCrd{n:05}.png")
 }
 
-/// 新建一张 aime 卡：生成 20 位 access code，在 `device_dir` 写 `<code>.txt`
-/// （文件内容即 code + 换行），返回该 code；与现有文件重号时自动重试。
 pub fn create_aime_card_in(device_dir: &Path) -> std::io::Result<String> {
     fs::create_dir_all(device_dir)?;
     for _ in 0..64 {
@@ -181,10 +164,6 @@ pub fn create_aime_card_in(device_dir: &Path) -> std::io::Result<String> {
     ))
 }
 
-/// 扫描 `device_dir` 下的 aime 卡：任意 .txt 文件，**文件内容**（去 BOM / 空白后）
-/// 为 20 位数字才算一张卡，access code 即该数字；文件名与 code 不一致时统一改名为
-/// `<code>.txt`，不是 20 位数字的文件自动跳过。结果按修改时间**倒序**——
-/// 新建卡显示在最前面。
 pub fn scan_aime_cards_in(device_dir: &Path) -> CardScan {
     let mut paths: Vec<PathBuf> = fs::read_dir(device_dir)
         .into_iter()
@@ -193,7 +172,7 @@ pub fn scan_aime_cards_in(device_dir: &Path) -> CardScan {
         .map(|e| e.path())
         .filter(|p| p.extension().is_some_and(|x| x.eq_ignore_ascii_case("txt")))
         .collect();
-    paths.sort(); // 稳定处理顺序
+    paths.sort();
 
     let mut cards: Vec<CardEntry> = Vec::new();
     let mut seen = std::collections::HashSet::new();
@@ -201,14 +180,12 @@ pub fn scan_aime_cards_in(device_dir: &Path) -> CardScan {
         let Ok(raw) = fs::read_to_string(&path) else {
             continue;
         };
-        // 去 BOM + 修剪首尾空白后必须是 20 位数字，否则跳过（不改名、不展示）
+
         let code = raw.trim_start_matches('\u{feff}').trim();
         if code.len() != 20 || !code.chars().all(|c| c.is_ascii_digit()) {
             continue;
         }
 
-        // 文件名与内容不一致：统一改名为 `<code>.txt`；目标已存在（同 code 卡已在）
-        // 或改名失败时沿用现有规范文件
         let stem = path
             .file_stem()
             .map(|s| s.to_string_lossy().into_owned())
@@ -217,7 +194,7 @@ pub fn scan_aime_cards_in(device_dir: &Path) -> CardScan {
         let final_path = if stem == code {
             path
         } else {
-            // 改名失败（如同 code 的卡已存在）时沿用现有规范文件
+
             let _ = fs::rename(&path, &canonical);
             canonical
         };
@@ -247,7 +224,7 @@ mod tests {
         v.extend_from_slice(&(data.len() as u32).to_be_bytes());
         v.extend_from_slice(typ);
         v.extend_from_slice(data);
-        v.extend_from_slice(&[0, 0, 0, 0]); // CRC 占位
+        v.extend_from_slice(&[0, 0, 0, 0]);
         v
     }
 
@@ -308,7 +285,7 @@ mod tests {
         fs::remove_dir_all(&dir).ok();
 
         let a = create_aime_card_in(&dir).expect("新建卡 a 应成功");
-        std::thread::sleep(std::time::Duration::from_millis(30)); // 确保 mtime 可区分先后
+        std::thread::sleep(std::time::Duration::from_millis(30));
         let b = create_aime_card_in(&dir).expect("新建卡 b 应成功");
         assert_ne!(a, b, "重号应自动重试");
         for code in [&a, &b] {
@@ -321,7 +298,7 @@ mod tests {
         assert_eq!(scan.cards.len(), 2);
         assert_eq!(scan.cards[0].name, b, "新建卡显示在最前面");
         assert_eq!(scan.cards[1].name, a);
-        // 文件内容即 code + 换行
+
         assert_eq!(
             fs::read_to_string(dir.join(format!("{b}.txt"))).unwrap(),
             format!("{b}\n")
@@ -334,12 +311,11 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("dnet_aime_scan_{}", std::process::id()));
         fs::create_dir_all(&dir).ok();
 
-        // 任意文件名 + 内容为 20 位数字：应改名为 <code>.txt 并收录
         let code = "53314980123456789012";
         fs::write(dir.join("random_name.txt"), format!("{code}\n")).unwrap();
-        // 带 BOM / 首尾空白同样认可
+
         fs::write(dir.join("bom.txt"), "\u{feff} 51112222333344445555 \r\n").unwrap();
-        // 非 20 位数字内容：跳过（不改名、不展示）
+
         fs::write(dir.join("note.txt"), "hello world").unwrap();
         fs::write(dir.join("short.txt"), "12345").unwrap();
 
@@ -352,7 +328,6 @@ mod tests {
         assert!(!scan.cards.iter().any(|c| c.name == "note"));
         assert_eq!(scan.cards[0].name, "51112222333344445555");
 
-        // 规范文件 + 同 code 的多余文件：去重为一张卡
         fs::write(dir.join("dup.txt"), code).unwrap();
         let scan = scan_aime_cards_in(&dir);
         assert_eq!(scan.cards.len(), 2);

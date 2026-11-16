@@ -1,12 +1,3 @@
-//! 游戏文件识别：检测 PE/ELF 类型，并按 mice/kitten 源码中的算法
-//! 精确复刻 CRC-32 计算（两者数学上均为标准 CRC-32）：
-//! - mice:  磁盘 PE 文件 .text 段原始字节的标准 CRC-32
-//!   （对应 C 源码 crc32.c 的 crc32_text_section）
-//! - kitten: ELF 加载映像 imageBase+10 起 0x4000 字节的标准 CRC-32
-//!   （对应 C 源码 Crc.c getCrc32Mem + elfLoader 的段映射；磁盘等价为
-//!   覆盖 vaddr [minLoadAddr+10, minLoadAddr+0x4010) 的 PT_LOAD 段文件字节，
-//!   超出 p_filesz 的零填充区按 0 计）
-
 use std::fs;
 use std::fs::File;
 use std::io::{self, Read, Seek, SeekFrom};
@@ -24,7 +15,7 @@ const SECTION_SIZE: u64 = 40;
 const ELF_MAGIC: [u8; 4] = [0x7F, b'E', b'L', b'F'];
 const ELFCLASS32: u8 = 1;
 const PT_LOAD: u32 = 1;
-/// kitten 源码：getCrc32Mem(baseAddr + 10, 0x4000)
+
 const KITTEN_CRC_OFFSET: u64 = 10;
 const KITTEN_CRC_LEN: u64 = 0x4000;
 const CHUNK: usize = 1 << 20;
@@ -37,7 +28,7 @@ pub enum FileKind {
 }
 
 impl FileKind {
-    /// 人类可读的架构描述，用于展示与加载器选择。
+
     pub fn arch(&self) -> &'static str {
         match self {
             FileKind::Pe { machine } if *machine == MACHINE_AMD64 => "x64",
@@ -56,7 +47,6 @@ pub struct IdentifyResult {
     pub db: Option<DbMatch>,
 }
 
-/// 读卡器程序固定文件名（大小写不敏感）。
 const CARD_READER_FILE: &str = "picodaemon.exe";
 
 fn is_reader_name(name: &std::ffi::OsStr) -> bool {
@@ -64,8 +54,6 @@ fn is_reader_name(name: &std::ffi::OsStr) -> bool {
         .eq_ignore_ascii_case(CARD_READER_FILE)
 }
 
-/// 在游戏目录中自动探测读卡器：查找大小写不敏感的 `picodaemon.exe`，
-/// 识别其 CRC 并命中识别库顶层 card_reader 组；命中返回 (文件路径, 版本)。
 pub fn probe_card_reader(dir: &Path) -> Option<(PathBuf, String)> {
     let entry = fs::read_dir(dir)
         .ok()?
@@ -77,7 +65,6 @@ pub fn probe_card_reader(dir: &Path) -> Option<(PathBuf, String)> {
     Some((path, version))
 }
 
-/// 打开文件并识别：返回文件类型 + CRC + 识别库命中（若有）。
 pub fn identify(path: &Path) -> io::Result<IdentifyResult> {
     let mut file = File::open(path)?;
     let kind = peek_kind(&mut file)?;
@@ -117,7 +104,7 @@ fn peek_kind(file: &mut File) -> io::Result<FileKind> {
         }
     }
     if magic[0..4] == ELF_MAGIC {
-        // 只支持 32 位 ELF（kitten 的加载器仅处理 ELFCLASS32）
+
         if magic[4] == ELFCLASS32 {
             return Ok(FileKind::Elf32);
         }
@@ -125,7 +112,6 @@ fn peek_kind(file: &mut File) -> io::Result<FileKind> {
     Ok(FileKind::Unknown)
 }
 
-/// 复刻 mice crc32_text_section：对 PE 的 .text 段原始字节算标准 CRC-32。
 fn pe_text_crc(file: &mut File) -> io::Result<u32> {
     let e_lfanew = read_u32(file, 0x3C)? as u64;
     let num_sections = read_u16(file, e_lfanew + 6)? as usize;
@@ -136,7 +122,7 @@ fn pe_text_crc(file: &mut File) -> io::Result<u32> {
         let off = section_table + i as u64 * SECTION_SIZE;
         let mut name = [0u8; 8];
         read_exact_at(file, &mut name, off)?;
-        // 与 C 的 strcmp 一致：截到首个 NUL 后比较
+
         let name = name.split(|b| *b == 0).next().unwrap_or(&name[..]);
         if name == b".text" {
             let raw_size = read_u32(file, off + 16)? as u64;
@@ -152,13 +138,12 @@ fn pe_text_crc(file: &mut File) -> io::Result<u32> {
     ))
 }
 
-/// 复刻 kitten 的 CRC：ELF 加载映像 imageBase+10 起 0x4000 字节。
 fn elf_crc(file: &mut File) -> io::Result<u32> {
     let e_phoff = read_u32(file, 28)? as u64;
     let e_phentsize = read_u16(file, 42)? as u64;
     let e_phnum = read_u16(file, 44)? as usize;
 
-    let mut segs: Vec<(u64, u64, u64)> = Vec::new(); // (p_vaddr, p_offset, p_filesz)
+    let mut segs: Vec<(u64, u64, u64)> = Vec::new();
     for i in 0..e_phnum {
         let off = e_phoff + i as u64 * e_phentsize;
         if read_u32(file, off)? == PT_LOAD {
@@ -194,7 +179,7 @@ fn elf_crc(file: &mut File) -> io::Result<u32> {
             continue;
         }
         if seg_start > cursor {
-            // 段间间隙：加载映像中未映射/未零化的区域按 0 计
+
             hash_zeros(&mut hasher, &zeros, seg_start - cursor);
         }
         hash_file_range(
@@ -258,23 +243,22 @@ mod tests {
     use super::*;
     use std::io::Write;
 
-    /// 构造最小 PE：DOS 头 + NT 头 + 1 个 .text 段
     fn build_pe(text_bytes: &[u8], machine: u16) -> Vec<u8> {
-        const OPT_SIZE: u16 = 0xE0; // 任意 >0 的 OptionalHeader 大小
+        const OPT_SIZE: u16 = 0xE0;
         let dos_size = 0x40usize;
         let file_size =
             dos_size + 4 + 20 + OPT_SIZE as usize + SECTION_SIZE as usize + text_bytes.len();
         let mut buf = vec![0u8; file_size];
-        // DOS 头
+
         buf[0..2].copy_from_slice(&PE_DOS_MAGIC.to_le_bytes());
         buf[0x3C..0x40].copy_from_slice(&(dos_size as u32).to_le_bytes());
-        // NT 头
+
         let nt = dos_size;
         buf[nt..nt + 4].copy_from_slice(&PE_SIGNATURE.to_le_bytes());
         buf[nt + 4..nt + 6].copy_from_slice(&machine.to_le_bytes());
-        buf[nt + 6..nt + 8].copy_from_slice(&1u16.to_le_bytes()); // NumberOfSections
+        buf[nt + 6..nt + 8].copy_from_slice(&1u16.to_le_bytes());
         buf[nt + 20..nt + 22].copy_from_slice(&OPT_SIZE.to_le_bytes());
-        // 段表（紧随 NT 头）
+
         let sec = nt + 24 + OPT_SIZE as usize;
         buf[sec..sec + 8].copy_from_slice(b".text\0\0\0");
         let raw_ptr = (sec + SECTION_SIZE as usize) as u32;
@@ -286,7 +270,7 @@ mod tests {
 
     #[test]
     fn standard_crc32_vector() {
-        // CRC-32 标准测试向量
+
         let mut h = crc32fast::Hasher::new();
         h.update(b"123456789");
         assert_eq!(h.finalize(), 0xCBF4_3926);
@@ -322,34 +306,32 @@ mod tests {
         assert_eq!(kind.arch(), "x64");
     }
 
-    /// 构造最小 ELF32：1 个 PT_LOAD 段，vaddr 从 0x80000000，文件偏移 0x100
     fn build_elf(seg_bytes: &[u8]) -> Vec<u8> {
         const PHOFF: usize = 52;
         let mut buf = vec![0u8; 0x100 + seg_bytes.len()];
         buf[0..4].copy_from_slice(&ELF_MAGIC);
         buf[4] = ELFCLASS32;
-        buf[16..18].copy_from_slice(&2u16.to_le_bytes()); // ET_EXEC
+        buf[16..18].copy_from_slice(&2u16.to_le_bytes());
         buf[28..32].copy_from_slice(&(PHOFF as u32).to_le_bytes());
-        buf[42..44].copy_from_slice(&32u16.to_le_bytes()); // e_phentsize
-        buf[44..46].copy_from_slice(&1u16.to_le_bytes()); // e_phnum
-        // 程序头
+        buf[42..44].copy_from_slice(&32u16.to_le_bytes());
+        buf[44..46].copy_from_slice(&1u16.to_le_bytes());
+
         buf[PHOFF..PHOFF + 4].copy_from_slice(&PT_LOAD.to_le_bytes());
-        buf[PHOFF + 4..PHOFF + 8].copy_from_slice(&0x100u32.to_le_bytes()); // p_offset
-        buf[PHOFF + 8..PHOFF + 12].copy_from_slice(&0x8000_0000u32.to_le_bytes()); // p_vaddr
-        buf[PHOFF + 16..PHOFF + 20].copy_from_slice(&(seg_bytes.len() as u32).to_le_bytes()); // p_filesz
-        buf[PHOFF + 20..PHOFF + 24].copy_from_slice(&(seg_bytes.len() as u32).to_le_bytes()); // p_memsz
+        buf[PHOFF + 4..PHOFF + 8].copy_from_slice(&0x100u32.to_le_bytes());
+        buf[PHOFF + 8..PHOFF + 12].copy_from_slice(&0x8000_0000u32.to_le_bytes());
+        buf[PHOFF + 16..PHOFF + 20].copy_from_slice(&(seg_bytes.len() as u32).to_le_bytes());
+        buf[PHOFF + 20..PHOFF + 24].copy_from_slice(&(seg_bytes.len() as u32).to_le_bytes());
         buf[0x100..].copy_from_slice(seg_bytes);
         buf
     }
 
     #[test]
     fn elf_crc_matches_kitten_mapping() {
-        // 段覆盖 vaddr [0x80000000, 0x80000000+0x6000)，CRC 范围 = 段内 [0x8000000A, +0x4000)
+
         let seg: Vec<u8> = (0..0x6000u32).map(|i| (i * 7 % 256) as u8).collect();
         let buf = build_elf(&seg);
         let mut f = tempfile("elf_crc", &buf);
 
-        // 预期：段文件偏移 0x100 + 0xA 起 0x4000 字节
         let mut expected = crc32fast::Hasher::new();
         expected.update(&seg[0xA..0xA + 0x4000]);
         let expected = expected.finalize();
@@ -359,12 +341,12 @@ mod tests {
 
     #[test]
     fn elf_crc_gap_handles_zeros() {
-        // 两个段，中间有间隙；间隙在加载映像中按 0 计
+
         const PHOFF: usize = 52;
         let seg1 = vec![0x11; 0x100];
         let seg2 = vec![0x22; 0x100];
-        let gap = 0x200usize; // 段间 vaddr 间隙
-        let mut buf = vec![0u8; 0x400]; // 头 + 2×phdr + 段1(0x100) + 间隙(0x200) + 段2(0x100)
+        let gap = 0x200usize;
+        let mut buf = vec![0u8; 0x400];
         buf[0..4].copy_from_slice(&ELF_MAGIC);
         buf[4] = ELFCLASS32;
         buf[28..32].copy_from_slice(&(PHOFF as u32).to_le_bytes());
@@ -378,7 +360,7 @@ mod tests {
         buf[p1 + 20..p1 + 24].copy_from_slice(&(seg1.len() as u32).to_le_bytes());
         let p2 = PHOFF + 32;
         let seg2_vaddr = 0x8000_0000u32 + 0x100 + gap as u32;
-        let seg2_file = 0x100 + 0x100 + 0x100; // 段 2 文件偏移
+        let seg2_file = 0x100 + 0x100 + 0x100;
         buf[p2..p2 + 4].copy_from_slice(&PT_LOAD.to_le_bytes());
         buf[p2 + 4..p2 + 8].copy_from_slice(&(seg2_file as u32).to_le_bytes());
         buf[p2 + 8..p2 + 12].copy_from_slice(&seg2_vaddr.to_le_bytes());
@@ -390,12 +372,11 @@ mod tests {
         let mut f = tempfile("elf_gap", &buf);
         let crc = elf_crc(&mut f).expect("ELF 解析成功");
 
-        // 手动构造等价字节流：段1 + 间隙零 + 段2（覆盖 CRC 范围即可）
         let mut stream = Vec::new();
         stream.extend_from_slice(&seg1);
         stream.extend_from_slice(&vec![0u8; gap]);
         stream.extend_from_slice(&seg2);
-        // CRC 范围: min_vaddr+10 起 0x4000，min_vaddr=0x80000000
+
         let s = &stream[10..(10 + 0x4000).min(stream.len())];
         let mut pad = Vec::new();
         if s.len() < 0x4000 {
@@ -421,9 +402,9 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("launcher_probe_{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
-        // 目录里没有 picodaemon.exe → None
+
         assert!(probe_card_reader(&dir).is_none());
-        // 目录里有非可识别内容的 picodaemon.exe → identify 失败 → None（不 panic）
+
         std::fs::write(dir.join("picodaemon.exe"), b"not an exe").unwrap();
         assert!(probe_card_reader(&dir).is_none());
         let _ = std::fs::remove_dir_all(&dir);
@@ -450,7 +431,7 @@ mod real_world_smoke {
 
     #[test]
     fn identify_real_pe_exe() {
-        // 真实编译器产出的 PE（kitten.exe），验证解析不崩且能算 CRC
+
         let p = Path::new(r"E:\vsproject\kittentools\win-release\kitten.exe");
         if !p.is_file() {
             eprintln!("跳过：找不到 kitten.exe");

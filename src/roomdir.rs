@@ -1,8 +1,3 @@
-//! 房间目录服务 HTTP 客户端（WinHTTP，支持 https，5s 超时）。
-//!
-//! 只做发现层交互：开房 / 心跳 / 列表 / 加入 / 成员表 / 离开 / 关房。
-//! 数据面（awl 的 P2P 连接）与这里完全无关，目录不可达只影响「新加入」。
-
 use serde::Deserialize;
 use std::sync::OnceLock;
 use windows::core::PCWSTR;
@@ -10,13 +5,8 @@ use windows::core::PCWSTR;
 use crate::t;
 use crate::tf;
 
-/// 进程级复用的 WinHTTP 会话（OnceLock 懒创建，存裸句柄）：
-/// 同一 session 内 WinHTTP 自动池化底层 TCP/TLS 连接，轮询期间免去每拍一次的
-/// 握手开销。进程生命周期持有、不主动关闭（WinHTTP 进程退出时统一回收）。
-/// 创建失败不缓存，下次请求重试。
 static DIR_SESSION: OnceLock<usize> = OnceLock::new();
 
-/// 取（或首次创建）共享 WinHTTP 会话；接收超时（5s）在会话级一次性设置。
 fn shared_session() -> Result<*mut core::ffi::c_void, String> {
     use windows::Win32::Networking::WinHttp::{
         WinHttpOpen, WinHttpSetOption, WINHTTP_ACCESS_TYPE_NO_PROXY, WINHTTP_OPTION_RECEIVE_TIMEOUT,
@@ -44,7 +34,6 @@ fn shared_session() -> Result<*mut core::ffi::c_void, String> {
     Ok(session)
 }
 
-/// 启动器 config.ini [room] 未配置时的默认目录地址。
 pub const DEFAULT_DIRECTORY: &str = "https://dnet.arcadehub.xyz/roomapi";
 
 #[derive(Clone, Debug)]
@@ -52,18 +41,17 @@ pub struct RoomDirClient {
     base: String,
 }
 
-/// 目录请求的分类错误（UI 按类别提示）。
 #[derive(Clone, Debug)]
 pub enum DirError {
-    /// 房间不存在 / 已过期（房主据此重新开房自愈）
+
     NotFound,
-    /// 密码错误
+
     Forbidden,
-    /// 房间已满（座位 3/3）
+
     Full,
-    /// 网络/服务不可达
+
     Transport(String),
-    /// 其他服务端错误
+
     Other(String),
 }
 
@@ -92,8 +80,6 @@ pub struct RoomSummary {
     pub room_id: String,
     pub name: String,
     pub game: String,
-    #[allow(dead_code)]
-    pub game_id: String,
     pub players: u32,
     pub max: u32,
 }
@@ -109,7 +95,6 @@ pub struct JoinInfo {
     pub name: String,
 }
 
-/// 房主 keychip 名下的活跃房间（进入店内对战页时查询；存在则直接回归）。
 #[derive(Clone, Debug, Deserialize)]
 pub struct MyRoom {
     pub room_id: String,
@@ -125,12 +110,10 @@ pub struct MemberInfo {
 
 #[derive(Clone, Debug, Deserialize)]
 pub struct MembersInfo {
-    #[allow(dead_code)]
-    pub host_peer_id: String,
+        pub host_peer_id: String,
     pub members: Vec<MemberInfo>,
 }
 
-// WinHttpAddRequestHeaders 原始绑定：按「字节数」解析长度（-1 = 自动）。
 #[link(name = "winhttp")]
 unsafe extern "system" {
     #[link_name = "WinHttpAddRequestHeaders"]
@@ -151,7 +134,6 @@ impl RoomDirClient {
         format!("{}/{}", self.base.trim_end_matches('/'), path.trim_start_matches('/'))
     }
 
-    /// 发一次请求，返回 (HTTP 状态码, 响应体文本)。
     fn request(&self, verb: &str, path: &str, body: Option<&str>) -> Result<(u16, String), String> {
         use windows::Win32::Networking::WinHttp::{
             WinHttpCloseHandle, WinHttpConnect, WinHttpOpenRequest,
@@ -183,8 +165,7 @@ impl RoomDirClient {
         let host = host.to_string();
 
         unsafe {
-            // 复用进程级 WinHTTP 会话（TCP/TLS 连接池），失败路径只关 connect/request，
-            // 会话本体跨请求保留。
+
             let session = shared_session()?;
 
             let host_w = crate::win_util::to_wide_null(&host);
@@ -218,7 +199,7 @@ impl RoomDirClient {
             let _ = WinHttpSetOption(Some(request), WINHTTP_OPTION_SECURITY_FLAGS, Some(&sec.to_ne_bytes()));
 
             let result = (|| -> Result<(), String> {
-                // Content-Type 头（POST 有 JSON 体；DELETE/GET 只有 Host 由 WinHTTP 自动补）
+
                 let hdr = crate::win_util::to_wide_null("Content-Type: application/json\r\n");
                 if verb == "POST" {
                     let ok = raw_add_request_headers(request, hdr.as_ptr(), (-1i32) as u32, WINHTTP_ADDREQ_FLAG_ADD);
@@ -282,8 +263,6 @@ impl RoomDirClient {
         serde_json::from_str(body).map_err(|e| DirError::Other(format!("bad json: {e}")))
     }
 
-    /// 开房，返回 6 位 room_id。`game` = games_db 产品名（展示）；`game_id` = 过滤键；
-    /// `keychip` 作为房间归属键（同 keychip 重复开房幂等返回原房间）。
     pub fn create_room(
         &self,
         name: &str,
@@ -312,7 +291,6 @@ impl RoomDirClient {
             .ok_or_else(|| format!("missing room_id: {text}"))
     }
 
-    /// 公开房间列表（`game_id` = Some 时按游戏过滤，None/空 = 全部）。
     pub fn list_rooms(&self, game_id: Option<&str>) -> Result<Vec<RoomSummary>, String> {
         let path = match game_id.map(str::trim).filter(|v| !v.is_empty()) {
             Some(id) => format!("/rooms?game_id={id}"),
@@ -327,7 +305,6 @@ impl RoomDirClient {
         Ok(r.rooms)
     }
 
-    /// 加入房间（验密 + 分配座位），返回接入所需的全部信息。
     pub fn join(&self, room_id: &str, password: &str, peer_id: &str) -> Result<JoinInfo, DirError> {
         let body = serde_json::json!({ "peer_id": peer_id, "password": password });
         let (status, text) = self
@@ -336,7 +313,6 @@ impl RoomDirClient {
         Self::parse_json(status, &text)
     }
 
-    /// 查询 keychip 名下的活跃房间：Some(房间) / None(无)。
     pub fn my_room(&self, keychip: &str) -> Result<Option<MyRoom>, String> {
         let (status, text) = self
             .request("GET", &format!("/rooms/mine?keychip={}", keychip), None)
@@ -351,7 +327,6 @@ impl RoomDirClient {
         Ok(Some(r))
     }
 
-    /// 房主拉取当前成员座位表。
     pub fn members(&self, room_id: &str) -> Result<MembersInfo, DirError> {
         let (status, text) = self
             .request("GET", &format!("/rooms/{room_id}/members"), None)
@@ -359,7 +334,6 @@ impl RoomDirClient {
         Self::parse_json(status, &text)
     }
 
-    /// 离开房间（释放座位）。
     pub fn leave(&self, room_id: &str, peer_id: &str) -> Result<(), String> {
         let body = serde_json::json!({ "peer_id": peer_id });
         let (status, _text) = self.request("POST", &format!("/rooms/{room_id}/leave"), Some(&body.to_string()))?;
@@ -370,8 +344,6 @@ impl RoomDirClient {
         }
     }
 
-    /// 房主关闭房间：host_peer_id（awl 身份）与 keychip（房间归属键，稳定）一并上送，
-    /// 服务端任一匹配即放行 —— awl 身份重铸（config 丢失 / dist 重拷）后仍能关掉自己的房间。
     pub fn close(
         &self,
         room_id: &str,
@@ -390,8 +362,6 @@ impl RoomDirClient {
         }
     }
 
-    /// 房主心跳保活：携带稳定归属键 keychip 刷新房间 last_heartbeat。
-    /// 200 -> Ok(())；其余状态码映射为 DirError（调用方通常忽略）。
     pub fn heartbeat(&self, room_id: &str, keychip: &str) -> Result<(), DirError> {
         let body = serde_json::json!({ "keychip": keychip });
         let (status, text) = self
@@ -402,5 +372,77 @@ impl RoomDirClient {
         } else {
             Err(DirError::from_status(status, &text))
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn status_maps_to_dir_error() {
+
+        assert!(matches!(DirError::from_status(404, "x"), DirError::NotFound));
+        assert!(matches!(DirError::from_status(403, "x"), DirError::Forbidden));
+        assert!(matches!(DirError::from_status(409, "x"), DirError::Full));
+
+        match DirError::from_status(500, "boom") {
+            DirError::Other(m) => {
+                assert!(m.contains("500"), "应带上状态码：{m}");
+                assert!(m.contains("boom"), "应带上响应正文：{m}");
+            }
+            e => panic!("非 404/403/409 应归为 Other，实际 {e:?}"),
+        }
+    }
+
+    #[test]
+    fn dir_error_message_is_not_empty() {
+        for e in [
+            DirError::NotFound,
+            DirError::Forbidden,
+            DirError::Full,
+            DirError::Transport("x".to_string()),
+            DirError::Other("oops".to_string()),
+        ] {
+            assert!(!e.message().trim().is_empty(), "{e:?} 应有提示文案");
+        }
+    }
+
+    #[test]
+    fn room_summary_parses_and_requires_fields() {
+        let s: RoomSummary = serde_json::from_str(
+            r#"{"room_id":"abc","name":"八人房","game":"ID8","game_id":"SBZZ","players":2,"max":4}"#,
+        )
+        .unwrap();
+        assert_eq!(s.room_id, "abc");
+        assert_eq!(s.name, "八人房");
+        assert_eq!((s.players, s.max), (2, 4));
+
+        assert!(serde_json::from_str::<RoomSummary>(r#"{"room_id":"x"}"#).is_err());
+    }
+
+    #[test]
+    fn join_info_defaults_optional_name() {
+
+        let j: JoinInfo = serde_json::from_str(
+            r#"{"host_peer_id":"p1","host_ip":"10.0.0.1","host_ip2":"10.0.0.2","your_ip":"10.0.0.3","game":"ID8"}"#,
+        )
+        .unwrap();
+        assert_eq!(j.name, "");
+        assert_eq!(j.host_ip, "10.0.0.1");
+    }
+
+    #[test]
+    fn members_info_parses_member_list() {
+        let m: MembersInfo = serde_json::from_str(
+            r#"{"host_peer_id":"p0","members":[{"peer_id":"p0","ip":"10.0.0.1"},{"peer_id":"p1","ip":"10.0.0.2"}]}"#,
+        )
+        .unwrap();
+        assert_eq!(m.members.len(), 2);
+        assert_eq!(m.members[1].peer_id, "p1");
+
+        let empty: MembersInfo =
+            serde_json::from_str(r#"{"host_peer_id":"p0","members":[]}"#).unwrap();
+        assert!(empty.members.is_empty());
     }
 }

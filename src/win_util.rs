@@ -1,5 +1,6 @@
-//! 跨模块复用的 Windows 平台辅助函数（宽字符串构造、DPAPI 加解密等）。
 use std::iter;
+
+pub const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 
 use windows::core::PCWSTR;
 use windows::Win32::Foundation::{HLOCAL, LocalFree};
@@ -7,22 +8,12 @@ use windows::Win32::Security::Cryptography::{
     CryptProtectData, CryptUnprotectData, CRYPTPROTECT_UI_FORBIDDEN, CRYPT_INTEGER_BLOB,
 };
 
-/// 将 `&str` 转为以 NUL 结尾的 UTF-16 宽字符串（`Vec<u16>`），
-/// 供 `windows::core::PCWSTR::from_raw(v.as_ptr())` 使用。
-///
-/// 取代各模块里重复的 `s.encode_utf16().chain(once(0)).collect()` 样板；
-/// `update.rs` 与 `roomdir.rs` 中原有的 `wide` 辅助现已统一收敛到此函数。
 pub fn to_wide_null(s: &str) -> Vec<u16> {
     s.encode_utf16().chain(iter::once(0)).collect()
 }
 
-/// DPAPI 密文在 INI 中的前缀，用于区分「已加密」与「旧明文」（向后兼容）。
 const SECRET_PREFIX: &str = "dpapi:";
 
-/// 用 Windows DPAPI 加密敏感字符串（UTF-8 明文 -> `"dpapi:"` + base64 密文）。
-///
-/// 失败（如非交互会话、无用户配置文件）时回退为原明文返回，避免崩溃；
-/// 调用方据此在保存时仍写入可恢复内容（下次成功时再加密）。
 pub fn protect_secret(plain: &str) -> String {
     if plain.is_empty() {
         return String::new();
@@ -57,8 +48,6 @@ pub fn protect_secret(plain: &str) -> String {
     }
 }
 
-/// 解密 DPAPI 密文（`"dpapi:"` + base64）。非本格式（旧明文）或解密失败直接返回原串，
-/// 保证旧版明文配置向后兼容、DPAPI 不可用时（如服务会话）仍可启动。
 pub fn unprotect_secret(stored: &str) -> String {
     if let Some(b64) = stored.strip_prefix(SECRET_PREFIX) {
         if let Some(cipher) = b64_decode(b64) {
@@ -96,7 +85,6 @@ pub fn unprotect_secret(stored: &str) -> String {
     stored.to_string()
 }
 
-// ---- 内联 base64（避免引入额外依赖；仅用于 DPAPI 二进制密文的 INI 存储） ----
 fn b64_encode(input: &[u8]) -> String {
     const T: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
     let mut out = String::with_capacity((input.len() + 2) / 3 * 4);
@@ -172,9 +160,9 @@ mod tests {
         let enc = protect_secret(plain);
         assert!(enc.starts_with(SECRET_PREFIX));
         assert_eq!(unprotect_secret(&enc), plain);
-        // 旧明文原样返回（向后兼容）
+
         assert_eq!(unprotect_secret("plaintext"), "plaintext");
-        // 空串不加密
+
         assert_eq!(protect_secret(""), "");
     }
 }

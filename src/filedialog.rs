@@ -1,5 +1,3 @@
-//! 原生文件选择对话框（Win32 GetOpenFileNameW，系统组件）
-
 use std::path::PathBuf;
 
 use windows::Win32::UI::Controls::Dialogs::{
@@ -11,7 +9,6 @@ fn to_wide(s: &str) -> Vec<u16> {
     s.encode_utf16().chain(std::iter::once(0)).collect()
 }
 
-/// 打开原生文件选择框；`pairs` 为 (过滤器名, 通配符) 序列。取消返回 None。
 pub fn pick_open_file(pairs: &[(&str, &str)], title: &str) -> Option<PathBuf> {
     unsafe {
         let mut filter = Vec::new();
@@ -19,7 +16,7 @@ pub fn pick_open_file(pairs: &[(&str, &str)], title: &str) -> Option<PathBuf> {
             filter.extend(to_wide(name));
             filter.extend(to_wide(pat));
         }
-        filter.push(0); // 双 0 结尾
+        filter.push(0);
 
         let mut file_buf = [0u16; 1024];
         let title_w = to_wide(title);

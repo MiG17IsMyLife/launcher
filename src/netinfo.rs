@@ -1,6 +1,3 @@
-//! 本机网卡与 IPv4 地址枚举（iphlpapi GetAdaptersAddresses）：
-//! 为网络设置页提供「网卡 → 该网卡 IPv4 地址/网段」两级选择数据。
-
 use windows::Win32::Foundation::ERROR_BUFFER_OVERFLOW;
 use windows::Win32::NetworkManagement::IpHelper::{
     GAA_FLAG_INCLUDE_PREFIX, GAA_FLAG_SKIP_ANYCAST, GAA_FLAG_SKIP_DNS_SERVER,
@@ -9,38 +6,36 @@ use windows::Win32::NetworkManagement::IpHelper::{
 };
 use windows::Win32::Networking::WinSock::{AF_INET, SOCKADDR_IN};
 
-/// 网卡上的一个 IPv4 单播地址
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct IpInfo {
-    /// 点分十进制，如 "192.168.100.114"
+
     pub ip: String,
-    /// 子网前缀长度（0-32）
+
     pub prefix: u8,
 }
 
 impl IpInfo {
-    /// 所在网段 CIDR，如 "192.168.100.0/24"
-    #[allow(dead_code)]
+
+    #[cfg(test)]
     pub fn cidr(&self) -> String {
         network_cidr(self)
     }
 }
 
-/// 一张网卡（网络适配器）——列表中仅包含已连接（IfOperStatusUp）的网卡
 #[derive(Clone, Debug)]
 pub struct AdapterInfo {
-    /// AdapterName（GUID 字符串），跨重启稳定，用作持久化标识
+
     pub guid: String,
-    /// FriendlyName，如 "以太网"
+
     pub friendly: String,
-    /// 硬件描述，如 "Realtek PCIe GbE Family Controller"
+
     pub description: String,
-    /// 该网卡的 IPv4 单播地址
+
     pub ips: Vec<IpInfo>,
 }
 
 impl AdapterInfo {
-    /// 下拉框标签，如 "以太网（Realtek PCIe GbE Family Controller）"
+
     pub fn label(&self) -> String {
         if self.description.is_empty() {
             self.friendly.clone()
@@ -50,7 +45,6 @@ impl AdapterInfo {
     }
 }
 
-/// 前缀长度 → 32 位子网掩码
 fn mask_bits(prefix: u8) -> u32 {
     if prefix == 0 {
         0
@@ -59,7 +53,6 @@ fn mask_bits(prefix: u8) -> u32 {
     }
 }
 
-/// IP + 前缀 → 所在网段 CIDR，如 "192.168.100.114/24" → "192.168.100.0/24"
 pub fn network_cidr(ip: &IpInfo) -> String {
     match parse_ipv4(&ip.ip) {
         Some(addr) => format!(
@@ -67,7 +60,7 @@ pub fn network_cidr(ip: &IpInfo) -> String {
             format_ipv4((addr & mask_bits(ip.prefix)).to_be_bytes()),
             ip.prefix
         ),
-        // 非法 IP（不应发生）时退回原样展示
+
         None => format!("{}/{}", ip.ip, ip.prefix),
     }
 }
@@ -76,8 +69,6 @@ fn format_ipv4(b: [u8; 4]) -> String {
     format!("{}.{}.{}.{}", b[0], b[1], b[2], b[3])
 }
 
-/// 取某 IPv4 的「下一个」地址（末位八位组 +1），作为无第二个地址时的
-/// ServerBox IP 默认值；末位 ≥254（广播/保留）或解析失败时返回 None。
 pub fn next_ip(ip: &str) -> Option<String> {
     let addr = parse_ipv4(ip)?;
     let mut bytes = addr.to_be_bytes();
@@ -100,7 +91,6 @@ fn parse_ipv4(s: &str) -> Option<u32> {
     Some(u32::from_be_bytes(bytes))
 }
 
-/// 网段标签列表（CIDR、去重保序）：同一网卡多个地址常属同一网段，下拉框按网段去重展示
 pub fn subnet_labels(ips: &[IpInfo]) -> Vec<String> {
     let mut out: Vec<String> = Vec::new();
     for ip in ips {
@@ -112,7 +102,6 @@ pub fn subnet_labels(ips: &[IpInfo]) -> Vec<String> {
     out
 }
 
-/// 枚举已连接（IfOperStatusUp）且有 IPv4 栈的网卡（跳过环回），按名称排序。
 pub fn list_adapters() -> Vec<AdapterInfo> {
     let mut adapters = Vec::new();
     let flags = GET_ADAPTERS_ADDRESSES_FLAGS(
@@ -123,8 +112,6 @@ pub fn list_adapters() -> Vec<AdapterInfo> {
     );
     let family = AF_INET.0 as u32;
 
-    // 先探测所需缓冲区大小（size 传 0、缓冲区为 None，必返回 ERROR_BUFFER_OVERFLOW 并写入所需大小），
-    // 再取数据；期间网卡集合变化会再次溢出，允许重试。
     let mut ok = false;
     let mut size: u32 = 0;
     let mut buf: Vec<u8> = Vec::new();
@@ -152,7 +139,7 @@ pub fn list_adapters() -> Vec<AdapterInfo> {
         if rc != ERROR_BUFFER_OVERFLOW.0 {
             return adapters;
         }
-        // 缓冲区仍不够：作废当前大小，下一轮重新探测
+
         size = 0;
     }
     if !ok {
@@ -163,8 +150,7 @@ pub fn list_adapters() -> Vec<AdapterInfo> {
     while !cur.is_null() {
         let aa = unsafe { &*cur };
         cur = aa.Next;
-        // 24 = IF_TYPE_SOFTWARE_LOOPBACK（环回接口对网卡选择无意义）；
-        // OperStatus 1 = IfOperStatusUp，只保留已连接的网卡
+
         if aa.IfType == 24 || aa.OperStatus.0 != 1 {
             continue;
         }
@@ -199,7 +185,7 @@ fn unicast_ipv4(ua: &IP_ADAPTER_UNICAST_ADDRESS_LH) -> Option<IpInfo> {
             return None;
         }
         let sin = &*(sa as *const SOCKADDR_IN);
-        // S_addr 按网络字节序存放在内存中；小端机器上读成的 u32 需先 from_be 转回主机序
+
         let addr = u32::from_be(sin.sin_addr.S_un.S_addr);
         Some(IpInfo {
             ip: format_ipv4(addr.to_be_bytes()),
@@ -238,7 +224,7 @@ mod tests {
 
     #[test]
     fn cidr_covers_prefix_edges() {
-        // 边界前缀：/0 /8 /30 /32（掩码换算经 network_cidr 间接验证）
+
         assert_eq!(
             network_cidr(&IpInfo {
                 ip: "192.168.100.114".into(),
@@ -298,7 +284,7 @@ mod tests {
     fn next_ip_increments_last_octet() {
         assert_eq!(next_ip("192.168.100.5").as_deref(), Some("192.168.100.6"));
         assert_eq!(next_ip("10.0.0.1").as_deref(), Some("10.0.0.2"));
-        // 广播 / 保留尾址不自动递增
+
         assert_eq!(next_ip("192.168.100.254"), None);
         assert_eq!(next_ip("192.168.100.255"), None);
         assert_eq!(next_ip("not-an-ip"), None);
@@ -311,7 +297,7 @@ mod tests {
                 ip: "192.168.100.114".into(),
                 prefix: 24,
             },
-            // 同网段的第二个地址应被去重
+
             IpInfo {
                 ip: "192.168.100.55".into(),
                 prefix: 24,
@@ -341,7 +327,6 @@ mod tests {
         assert_eq!(no_desc.label(), "以太网");
     }
 
-    /// 真机冒烟：枚举应成功返回，且每个地址都能解析回合法 IPv4
     #[test]
     fn list_adapters_smoke() {
         let adapters = list_adapters();

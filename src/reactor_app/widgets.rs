@@ -1,4 +1,3 @@
-//! 通用小部件与纯函数助手：设置行 / 分隔线 / 徽章 / 占位块 / 识别库再匹配 / id 与时间戳。
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use windows_reactor::*;
@@ -9,10 +8,10 @@ use crate::storage::{DPAD_CODE_BASE, GameRecord};
 use crate::t;
 use crate::tf;
 
+use super::message::Message;
 use super::pages::games::{ROW_COVER_H, ROW_COVER_W};
+use super::Launcher;
 
-/// 行内右侧的文本标注（平台 / ServerBox / 读卡器状态）。
-/// 参考 Windows「设置」列表：纯文字、无方框、无底色。
 pub(super) fn row_chip(label: &str) -> View {
     TextBlock::new()
         .text(label.to_string())
@@ -21,7 +20,6 @@ pub(super) fn row_chip(label: &str) -> View {
         .into()
 }
 
-/// 按键绑定的可读描述：按钮编号，或 1001~1004 的十字键方向
 pub(super) fn binding_label(value: u32) -> String {
     use rawinput::{DPAD_DOWN, DPAD_LEFT, DPAD_RIGHT, DPAD_UP};
     match value.checked_sub(DPAD_CODE_BASE) {
@@ -33,30 +31,25 @@ pub(super) fn binding_label(value: u32) -> String {
     }
 }
 
-/// 按记录中的 crc + loader 再次命中识别库，得到该记录当前对应的识别构建
-/// （用于渲染菜单时推导 ServerBox 可用性 / 校验期望 CRC）。
-pub(super) fn record_db_match(game: &GameRecord) -> Option<db::DbMatch> {
+pub(super) fn record_db_match_ref(game: &GameRecord) -> Option<&'static db::DbMatch> {
     let s = game.crc.as_deref()?;
     let s = s
         .strip_prefix("0x")
         .or_else(|| s.strip_prefix("0X"))
         .unwrap_or(s);
     let crc = u32::from_str_radix(s, 16).ok()?;
-    db::lookup(crc, game.loader)
+    db::lookup_ref(crc, game.loader)
 }
 
-/// 记录是否属于识别库中名为 `product` 的产品（`product` 为已 trim 的非空产品名）。
-///
-/// 两条判定路径，按序优先：
-/// 1. **CRC 命中**（[`record_db_match`]）：kitten / mice 等带 CRC 的构建；
-/// 2. **game_id + 版本命中**（`db::lookup_by_game_id`）：segatools 游戏走 ICF 识别
-///    入库（`crc` 为 None），而识别库里 segatools 条目只有 `version` 没有 `crc`，
-///    只能拿 ICF 解析出的 id + 版本反查产品名。缺这两项时回退按记录名比较。
+pub(super) fn record_db_match(game: &GameRecord) -> Option<db::DbMatch> {
+    record_db_match_ref(game).cloned()
+}
+
 pub(super) fn record_matches_product(game: &GameRecord, product: &str) -> bool {
     if product.is_empty() {
         return false;
     }
-    if let Some(m) = record_db_match(game) {
+    if let Some(m) = record_db_match_ref(game) {
         return m.name == product;
     }
     let id = game
@@ -71,7 +64,7 @@ pub(super) fn record_matches_product(game: &GameRecord, product: &str) -> bool {
         .filter(|s| !s.is_empty());
     match (id, version) {
         (Some(id), Some(v)) => db::lookup_by_game_id(id, v).is_some_and(|m| m.name == product),
-        // 手动添加的未知游戏：没有 id / 版本，只能按记录名（= 入库时填的名字）兜底
+
         _ => game.name.trim() == product,
     }
 }
@@ -94,7 +87,6 @@ pub(super) fn row_placeholder(name: &str) -> View {
         )
 }
 
-/// Win11 设置风格的分组：小标题 + 卡片（用于把设置页拆成多组）
 pub(super) fn settings_section(title: &str, rows: Vec<KeyedView>) -> View {
     StackPanel::new()
         .spacing(8.0)
@@ -120,31 +112,31 @@ pub(super) fn settings_section(title: &str, rows: Vec<KeyedView>) -> View {
         .into()
 }
 
-/// Win11 设置风格的设置行：左侧图标 + 标题，右侧控件。
-/// 标题下方不再显示解释性文字（所有设置界面统一，输入页的方案推广到全部）。
-/// `desc` 参数保留以维持调用签名兼容，但不再渲染。
-pub(super) fn settings_row(icon: View, title: &str, desc: &str, control: View) -> View {
-    // 描述为空时不渲染第二行（部分行只有标题），避免空 TextBlock 撑高
-    let text: View = if desc.is_empty() {
-        StackPanel::new()
-            .spacing(2.0)
-            .vertical_alignment(VerticalAlignment::Center)
-            .children([TextBlock::new().text(title).font_size(14.0)])
-            .into()
-    } else {
-        StackPanel::new()
-            .spacing(2.0)
-            .vertical_alignment(VerticalAlignment::Center)
-            .children((
-                TextBlock::new().text(title).font_size(14.0),
-                TextBlock::new()
-                    .text(desc)
-                    .font_size(12.0)
-                    .opacity(0.7)
-                    .text_wrapping(TextWrapping::Wrap),
-            ))
-            .into()
-    };
+pub(super) fn settings_row(icon: View, title: &str, control: View) -> View {
+    settings_row_sub(icon, title, None, control)
+}
+
+pub(super) fn settings_row_sub(
+    icon: View,
+    title: &str,
+    subtitle: Option<String>,
+    control: View,
+) -> View {
+    let mut texts = vec![KeyedView::new(
+        "title",
+        TextBlock::new().text(title).font_size(14.0),
+    )];
+    if let Some(sub) = subtitle {
+        texts.push(KeyedView::new(
+            "subtitle",
+            TextBlock::new().text(sub).font_size(12.0).opacity(0.6),
+        ));
+    }
+    let text: View = StackPanel::new()
+        .spacing(2.0)
+        .vertical_alignment(VerticalAlignment::Center)
+        .keyed_children(texts)
+        .into();
     Grid::new()
         .horizontal_alignment(HorizontalAlignment::Stretch)
         .margin(Thickness::new(16.0, 12.0, 16.0, 12.0))
@@ -164,16 +156,10 @@ pub(super) fn settings_row(icon: View, title: &str, desc: &str, control: View) -
         .into()
 }
 
-/// 可被选中的值文本：鼠标可选中 / 全选 / 复制。
-/// 用于房间 ID、密码、IP 等字符串 / 数字类型的设置值。
 pub(super) fn selectable_text(text: impl Into<String>) -> TextBlock {
     TextBlock::new().text(text).is_text_selection_enabled(true)
 }
 
-/// 设置行右侧的开关：文字在左、开关在右。
-/// WinUI ToggleSwitch 默认模板是"滑块在左、On/Off 文字在右"且固有宽度很大，
-/// 因此这里清空自带文字、用固定宽度只保留滑块（否则滑块会停在距行右缘很远的左侧），
-/// 再用独立 TextBlock 在滑块左侧显示"开/关"状态。
 pub(super) fn settings_toggle<C: IntoPayloadCallback<bool>>(on: bool, enabled: bool, callback: C) -> View {
     let state_text = if on { t!("开", "On") } else { t!("关", "Off") };
     StackPanel::new()
@@ -205,7 +191,6 @@ mod tests {
     use super::*;
     use crate::storage::Loader;
 
-    /// 测试用游戏记录：只填参与产品匹配的字段，其余给默认值。
     fn record(loader: Loader, crc: Option<&str>, game_id: Option<&str>, version: Option<&str>, name: &str) -> GameRecord {
         GameRecord {
             id: "t".into(),
@@ -226,6 +211,7 @@ mod tests {
             gfx_patch: None,
             test_mode: None,
             card: None,
+            region: None,
             play_count: 0,
             last_played: None,
             added_at: 0,
@@ -234,7 +220,7 @@ mod tests {
 
     #[test]
     fn crc_records_match_by_lookup() {
-        // mice（D8 JPN 2.01）：CRC 命中产品
+
         let r = record(Loader::Mice, Some("0x1fd6136a"), Some("SBZZ"), Some("2.01"), "InitialD Arcade Stage 8 JPN");
         assert!(record_matches_product(&r, "InitialD Arcade Stage 8 JPN"));
         assert!(!record_matches_product(&r, "InitialD Arcade Stage 8 EXP"));
@@ -243,8 +229,7 @@ mod tests {
 
     #[test]
     fn icf_segatools_records_match_by_game_id_and_version() {
-        // segatools（ICF 入库）：无 CRC，靠 game_id + 版本反查产品
-        // SDGT 3.21.00 → Season 5；2.80.00 → Season 4（同 id 不同版本须能区分）
+
         let s5 = record(Loader::Segatools, None, Some("SDGT"), Some("3.21.00"), "InitialD The Arcade Season 5");
         let s4 = record(Loader::Segatools, None, Some("SDGT"), Some("2.80.00"), "InitialD The Arcade Season 4");
         assert!(record_matches_product(&s5, "InitialD The Arcade Season 5"));
@@ -252,7 +237,6 @@ mod tests {
         assert!(record_matches_product(&s4, "InitialD The Arcade Season 4"));
         assert!(!record_matches_product(&s4, "InitialD The Arcade Season 5"));
 
-        // IDZ：SDDF 1.30.00（Zero）与 2.31.00（Zero Ver.2）
         let z = record(Loader::Segatools, None, Some("SDDF"), Some("1.30.00"), "InitialD Arcade Stage Zero");
         let z2 = record(Loader::Segatools, None, Some("SDDF"), Some("2.31.00"), "InitialD Arcade Stage Zero Ver.2");
         assert!(record_matches_product(&z, "InitialD Arcade Stage Zero"));
@@ -262,14 +246,13 @@ mod tests {
 
     #[test]
     fn manual_records_fall_back_to_name() {
-        // 未命中识别库、手动命名的记录：按记录名兜底
+
         let r = record(Loader::Mice, Some("0xdeadbeef"), None, None, "My Game");
         assert!(record_matches_product(&r, "My Game"));
         assert!(!record_matches_product(&r, "Other"));
     }
 }
 
-/// 卡片内两行之间的 1px 分隔线
 pub(super) fn separator() -> View {
     Border::new()
         .height(1.0)
@@ -278,7 +261,6 @@ pub(super) fn separator() -> View {
         .into()
 }
 
-/// 设置占位页（图形/网络/输入）
 pub(super) fn placeholder_page(title: &str, desc: &str) -> View {
     StackPanel::new()
         .margin(Thickness::new(28.0, 20.0, 28.0, 16.0))
@@ -331,4 +313,16 @@ pub(super) fn now_secs() -> u64 {
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_secs())
         .unwrap_or(0)
+}
+
+pub(super) const ANIM_FRAME_MS: u64 = 16;
+
+pub(super) fn spawn_anim_tick(
+    context: &ComponentContext<Launcher>,
+    make: impl FnOnce() -> Message + Send + 'static,
+) {
+    context.spawn_background(move |_| {
+        std::thread::sleep(std::time::Duration::from_millis(ANIM_FRAME_MS));
+        make()
+    });
 }

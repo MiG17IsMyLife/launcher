@@ -1,36 +1,15 @@
-//! ICF 文件解析：SEGA Nu / ALLS 平台的游戏元数据文件（识别 IDAC 用）。
-//!
-//! 格式复刻自 rakisaionji/icf-reader（MIT，https://github.com/rakisaionji/icf-reader）：
-//!
-//! - **加密层**：整文件 AES-128-CBC（Rijndael，无填充），固定密钥/IV；按 0x1000 字节
-//!   分块独立解密（每块重置 IV），每块明文的前 16 字节再与该块在文件中的偏移量
-//!   `location`（小端 u64 ×2）异或；
-//! - **头部 0x40 字节**（小端）：`0x00` u32 主 CRC32（= 其后全部字节的 CRC32）、
-//!   `0x04` u32 总长、`0x08` u64 填充=0、`0x10` u64 条目数 count（须满足
-//!   `0x40*(count+1)==总长`）、`0x18` 4 字符 appid（即游戏 id，如 "SDGT"）、
-//!   `0x1C` 3 字节 platid、`0x1F` platgen、`0x20` u32 子 CRC32（启用条目各 0x40
-//!   字节 CRC32 的异或累积）、`0x24` 起 7×u32 填充=0；
-//! - **条目区**：count 个 0x40 字节条目：`data[0]==2 && data[1]==1` 为启用、
-//!   `+0x04` u32 类型（0x0000 SYSTEM / 0x0001 APP / 0x0101 PATCH / 0x0002 OPTION）、
-//!   `+0x20` 版本（build u8、minor u8、major u16 LE）。
-//!
-//! 版本取第一个启用的 APP 条目，格式化为 `major.minor.build`（后两段两位补零）。
-
 use std::path::Path;
 
 use aes::Aes128;
 use cbc::cipher::{BlockDecryptMut, KeyIvInit, generic_array::GenericArray};
 use cbc::Decryptor;
 
-/// 解析结果：游戏 id（4 字符，如 "SDGT"）与版本（如 "3.21.00"）
-#[allow(dead_code)] // IDAC 接入预留接口：识别流程接入后即有调用方
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct IcfInfo {
     pub id: String,
     pub version: String,
 }
 
-/// 固定主密钥 / IV（SEGA Nu / ALLS 分发格式，与 icf-reader 一致）
 const MASTER_KEY: [u8; 16] = [
     0x09, 0xCA, 0x5E, 0xFD, 0x30, 0xC9, 0xAA, 0xEF, 0x38, 0x04, 0xD0, 0xA7, 0xE3, 0xFA, 0x71, 0x20,
 ];
@@ -38,16 +17,12 @@ const MASTER_IV: [u8; 16] = [
     0xB1, 0x55, 0xC2, 0x2C, 0x2E, 0x7F, 0x04, 0x91, 0xFA, 0x7F, 0x0F, 0xDC, 0x21, 0x7A, 0xFF, 0x90,
 ];
 
-/// AES-CBC 分块大小、头部 / 条目大小
 const CHUNK: usize = 0x1000;
 const HEAD: usize = 0x40;
 const ENTRY: usize = 0x40;
 
-/// APP 条目类型：其版本即游戏版本
 const TYPE_APP: u32 = 0x0001;
 
-/// 解析 ICF 文件，返回游戏 id 与版本。
-#[allow(dead_code)] // IDAC 接入预留接口：识别流程接入后即有调用方
 pub fn parse_icf(path: &Path) -> Result<IcfInfo, String> {
     let cipher = std::fs::read(path)
         .map_err(|e| format!("读取 ICF 文件失败（{}）：{e}", path.display()))?;
@@ -56,8 +31,6 @@ pub fn parse_icf(path: &Path) -> Result<IcfInfo, String> {
     parse_icf_bytes(&data).map_err(|e| format!("ICF 解析失败（{}）：{e}", path.display()))
 }
 
-/// 解密 ICF 字节：按 0x1000 块 AES-128-CBC（每块重置 IV、无填充）解密，
-/// 每块明文前 16 字节与块偏移（小端 u64 ×2）异或。
 fn decrypt_icf(cipher: &[u8]) -> Result<Vec<u8>, String> {
     if cipher.is_empty() {
         return Err("文件为空".to_string());
@@ -70,7 +43,7 @@ fn decrypt_icf(cipher: &[u8]) -> Result<Vec<u8>, String> {
     }
     let mut plain = cipher.to_vec();
     for (idx, chunk) in plain.chunks_mut(CHUNK).enumerate() {
-        // 与 C# 实现一致：每个 0x1000 块都新建解密器，CBC 链从 IV 重新开始
+
         let mut dec = Decryptor::<Aes128>::new_from_slices(&MASTER_KEY, &MASTER_IV)
             .expect("密钥/IV 为固定 16 字节");
         for block in chunk.chunks_exact_mut(16) {
@@ -84,12 +57,11 @@ fn decrypt_icf(cipher: &[u8]) -> Result<Vec<u8>, String> {
     Ok(plain)
 }
 
-/// 解析解密后的 ICF 明文：头部校验 → 子 CRC32 校验 → 取 APP 条目版本。
 fn parse_icf_bytes(data: &[u8]) -> Result<IcfInfo, String> {
     if data.len() < HEAD {
         return Err(format!("数据长度 {} 小于头部大小 0x40", data.len()));
     }
-    // 主 CRC32：除前 4 字节外的全部数据
+
     let crc = crc32fast::hash(&data[4..]);
     if crc != rd_u32(data, 0) {
         return Err(format!(
@@ -116,7 +88,7 @@ fn parse_icf_bytes(data: &[u8]) -> Result<IcfInfo, String> {
             data.len()
         ));
     }
-    // appid：头部 4 字节 ASCII
+
     let id_bytes = &data[0x18..0x1C];
     let id = std::str::from_utf8(id_bytes)
         .map_err(|_| format!("appid 非 ASCII：{:02x?}", id_bytes))?
@@ -124,13 +96,13 @@ fn parse_icf_bytes(data: &[u8]) -> Result<IcfInfo, String> {
     if id.is_empty() {
         return Err("appid 为空".to_string());
     }
-    // 头部尾部 7×u32 填充须为 0
+
     for i in 0..7 {
         if rd_u32(data, 0x24 + i * 4) != 0 {
             return Err(format!("头部尾部第 {i} 个 u32 填充非零"));
         }
     }
-    // 子 CRC32：启用条目逐条 CRC32 异或累积
+
     let mut sub = 0u32;
     for i in 0..count as usize {
         let e = &data[HEAD + i * ENTRY..HEAD + (i + 1) * ENTRY];
@@ -145,7 +117,7 @@ fn parse_icf_bytes(data: &[u8]) -> Result<IcfInfo, String> {
             sub
         ));
     }
-    // 第一个启用的 APP 条目：build u8、minor u8、major u16 LE
+
     for i in 0..count as usize {
         let e = &data[HEAD + i * ENTRY..HEAD + (i + 1) * ENTRY];
         if !(e[0] == 2 && e[1] == 1) || rd_u32(e, 4) != TYPE_APP {
@@ -180,9 +152,8 @@ mod tests {
     use cbc::cipher::BlockEncryptMut;
     use cbc::Encryptor;
 
-    type EntrySpec = (bool, u32, (u16, u8, u8)); // (启用, 类型, (major, minor, build))
+    type EntrySpec = (bool, u32, (u16, u8, u8));
 
-    /// 合成 ICF 明文：头部 + 条目，填好总长 / 主 CRC32 / 子 CRC32 / appid="SDGT"
     fn build_plain_icf(entries: &[EntrySpec]) -> Vec<u8> {
         let count = entries.len();
         let mut data = vec![0u8; HEAD * (count + 1)];
@@ -216,7 +187,6 @@ mod tests {
         data
     }
 
-    /// encrypt_icf_bytes：decrypt_icf 的逆过程（异或 → AES-CBC 加密），构造测试夹具
     fn encrypt_icf_bytes(plain: &[u8]) -> Vec<u8> {
         let mut out = plain.to_vec();
         for (idx, chunk) in out.chunks_mut(CHUNK).enumerate() {
@@ -248,7 +218,7 @@ mod tests {
 
     #[test]
     fn round_trip_sdgt_3_21_00() {
-        // SYSTEM 条目在前，APP 条目在后：应跳过 SYSTEM 命中 APP
+
         let plain = build_plain_icf(&[
             (true, SYSTEM, (2, 0, 0)),
             (true, APP, (3, 21, 0)),
@@ -281,7 +251,7 @@ mod tests {
 
     #[test]
     fn multi_chunk_file_round_trips() {
-        // 64 条目 → 总长 0x1040，跨两个 0x1000 解密块（验证块偏移异或）
+
         let mut entries = vec![(true, APP, (3, 21, 0))];
         entries.resize(64, (false, 0xFFFF, (0, 0, 0)));
         let plain = build_plain_icf(&entries);
@@ -305,7 +275,7 @@ mod tests {
 
     #[test]
     fn truncated_data_fails_count_check() {
-        // 截掉一个条目并同步修正头部的总长 / 主 CRC32，让失败确定性地落在条目数校验
+
         let mut plain = build_plain_icf(&[(true, APP, (3, 21, 0))]);
         let cut = plain.len() - ENTRY;
         plain.truncate(cut);

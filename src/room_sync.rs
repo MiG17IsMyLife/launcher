@@ -1,29 +1,3 @@
-//! 房间内成员表长连接同步（星型：房主权威 + 成员状态经房主中转）。
-//!
-//! 目录服务只在加入/离开等事件时被调用；房间内的成员表与游玩状态经本通道同步：
-//!
-//! - 房主（权威）在 `HOST_GAME_IP:ROOM_SYNC_PORT`（awl 虚拟网卡，仅房间子网可达）
-//!   监听 TCP；成员连接后立即收到全量成员表快照，此后每次变化即时推送；
-//! - 成员经同一连接上报自身游玩状态（空闲/游玩中，按启动器 `game_running` 判定）
-//!   与昵称，30s 保活兼作连接活性心跳；房主聚合后随成员表广播；
-//! - 房主关闭房间（或启动器退出）先广播 close 帧再停线程；成员收到后立即退出房间
-//!   （未收到时靠通道断开 / awl 掉线兜底）。
-//!
-//! 协议（行分隔 JSON，`\n` 结尾）：
-//! - 房主→成员：`{"type":"table","version":u64,"host_peer_id":"…","host_nick":"…",`
-//!   `"host_playing":bool,"members":[{"peer_id":"…","ip":"…","nick":"…","playing":bool}]}`
-//!   / `{"type":"close"}`（房主关闭房间通知）
-//! - 成员→房主：`{"type":"hello","peer_id":"…","nick":"…","playing":bool}`（连接首帧）/
-//!   `{"type":"status","peer_id":"…","nick":"…","playing":bool}`（变化 + 30s 保活）
-//! - `nick` / `host_nick` 为可选字段（serde default）：旧版对端缺失时昵称回退别名显示。
-//!
-//! 线程模型（与 `server::spawn_probe` 同模式——reactor 框架的 spawn_background 是
-//! FnOnce→单条消息，无法长驻回灌，走共享态 + RoomTick 本地消费）：
-//! - HostSync：accept 线程（非阻塞轮询 stop + 绑定失败重试）+ 每连接一线程
-//!   （读超时轮询：读成员帧更新状态、版本号推进即推快照、closing 置位即广播 close）；
-//! - MemberSync：连接线程（断线重试，收到 close 或 stop 后退出）+ 每会话读线程
-//!   （收 table 入收件箱 / close 置位）+ 写线程（发 hello/status/保活）。
-
 use std::collections::HashMap;
 use std::io::{BufRead, BufReader, ErrorKind, Write};
 use std::net::{TcpListener, TcpStream};
@@ -35,35 +9,36 @@ use serde::{Deserialize, Serialize};
 
 use crate::awl::{HOST_GAME_IP, ROOM_SYNC_PORT};
 
-/// 共享态轮询/推帧间隔。
+fn lock<T>(m: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
+    m.lock().unwrap_or_else(|e| e.into_inner())
+}
+
 const POLL_INTERVAL: Duration = Duration::from_millis(200);
-/// 成员连接失败重试间隔。
+
 const CONNECT_RETRY: Duration = Duration::from_secs(1);
-/// 成员状态保活周期（兼作连接活性心跳）。
+
 const STATUS_KEEPALIVE: Duration = Duration::from_secs(30);
-/// 成员状态帧过期：超过该时长无任何帧视为掉线（游玩状态回落空闲）。
+
 const STATUS_STALE: Duration = Duration::from_secs(75);
-/// 连接读超时（轮询 stop/版本号用的非阻塞替代）。
+
 const READ_TIMEOUT: Duration = Duration::from_millis(500);
 
-/// 成员条目（昵称 + 游玩状态）。
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct SyncMember {
     pub peer_id: String,
     pub ip: String,
-    /// 成员昵称（缺省 None = 旧版对端未上报，UI 回退别名显示）
+
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub nick: Option<String>,
     #[serde(default)]
     pub playing: bool,
 }
 
-/// 房主广播的全量成员表快照。
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct SyncTable {
     pub version: u64,
     pub host_peer_id: String,
-    /// 房主昵称（缺省 None = 旧版房主未上报）
+
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub host_nick: Option<String>,
     #[serde(default)]
@@ -71,7 +46,6 @@ pub struct SyncTable {
     pub members: Vec<SyncMember>,
 }
 
-/// 成员→房主上行帧。
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 enum UpFrame {
@@ -91,46 +65,41 @@ enum UpFrame {
     },
 }
 
-/// 房主→成员下行帧类型标记（table 之外识别 close 用）。
 #[derive(Deserialize)]
 struct DownTag {
     #[serde(rename = "type")]
     kind: String,
 }
 
-/// close 帧字面量（房主关闭房间通知）。
 const CLOSE_FRAME: &str = "{\"type\":\"close\"}\n";
-
-// ---------- 房主侧 ----------
 
 struct HostState {
     stop: AtomicBool,
-    /// 关房广播标志：置位后各连接线程发 close 帧并退出（Drop 兜底杀 awl）
+
     closing: AtomicBool,
-    /// 当前快照版本（有变化才 +1；连接线程据此推帧）
+
     version: AtomicU64,
-    /// UI 设置的权威成员表：(房主 peer_id, [(成员 peer_id, 座位 ip)], 房主游玩状态)
+
     base: Mutex<Option<(String, Vec<(String, String)>, bool)>>,
-    /// 房主昵称（随 table 帧广播）
+
     host_nick: Mutex<Option<String>>,
-    /// 成员上报的游玩状态：peer_id → (playing, 最后帧时刻)
+
     statuses: Mutex<HashMap<String, (bool, Instant)>>,
-    /// 成员上报的昵称：peer_id → nick
+
     nicks: Mutex<HashMap<String, String>>,
-    /// 最近一次构建的快照（diff 用，避免无谓广播）
+
     last: Mutex<Option<SyncTable>>,
 }
 
-/// 由权威成员表 + 成员上报状态重建快照；内容有变化才升版本。
 fn host_rebuild(state: &HostState) {
-    let Some((host_peer_id, members, host_playing)) = state.base.lock().unwrap().clone() else {
+    let Some((host_peer_id, members, host_playing)) = lock(&state.base).clone() else {
         return;
     };
-    let host_nick = state.host_nick.lock().unwrap().clone();
+    let host_nick = lock(&state.host_nick).clone();
     let now = Instant::now();
     let list: Vec<SyncMember> = {
-        let statuses = state.statuses.lock().unwrap();
-        let nicks = state.nicks.lock().unwrap();
+        let statuses = lock(&state.statuses);
+        let nicks = lock(&state.nicks);
         members
             .iter()
             .map(|(peer_id, ip)| SyncMember {
@@ -144,7 +113,7 @@ fn host_rebuild(state: &HostState) {
             })
             .collect()
     };
-    let mut last = state.last.lock().unwrap();
+    let mut last = lock(&state.last);
     let same = last
         .as_ref()
         .map(|t| {
@@ -177,7 +146,6 @@ fn host_rebuild(state: &HostState) {
     });
 }
 
-/// 上行帧处理：更新成员状态/昵称并重建快照。
 fn host_handle_up(state: &HostState, frame: UpFrame) {
     let (peer_id, playing, nick) = match frame {
         UpFrame::Hello { peer_id, nick, playing } | UpFrame::Status { peer_id, nick, playing } => {
@@ -192,13 +160,12 @@ fn host_handle_up(state: &HostState, frame: UpFrame) {
         .insert(peer_id.clone(), (playing, now));
     if let Some(n) = nick {
         if !n.is_empty() {
-            state.nicks.lock().unwrap().insert(peer_id, n);
+            lock(&state.nicks).insert(peer_id, n);
         }
     }
     host_rebuild(state);
 }
 
-/// 单连接线程：读成员帧 + 版本推进即推快照 + 关房广播（读超时轮询，单线程收发）。
 fn host_conn_loop(state: Arc<HostState>, stream: TcpStream) {
     let _ = stream.set_nodelay(true);
     if stream.set_read_timeout(Some(READ_TIMEOUT)).is_err() {
@@ -213,27 +180,27 @@ fn host_conn_loop(state: Arc<HostState>, stream: TcpStream) {
         if state.stop.load(Ordering::SeqCst) {
             return;
         }
-        // 关房广播：发 close 帧后退出（成员收到即主动退出房间）
+
         if state.closing.load(Ordering::SeqCst) {
             let _ = writer.write_all(CLOSE_FRAME.as_bytes()).and_then(|_| writer.flush());
             return;
         }
         line.clear();
         match reader.read_line(&mut line) {
-            Ok(0) => return, // 对端关闭
+            Ok(0) => return,
             Ok(_) => {
                 match serde_json::from_str::<UpFrame>(line.trim()) {
                     Ok(frame) => host_handle_up(&state, frame),
-                    Err(_) => {} // 坏帧忽略
+                    Err(_) => {}
                 }
             }
             Err(e) if matches!(e.kind(), ErrorKind::WouldBlock | ErrorKind::TimedOut) => {}
             Err(_) => return,
         }
-        // 版本推进（含连接后首推）→ 发全量快照
+
         let v = state.version.load(Ordering::SeqCst);
         if v != sent_version {
-            let snap = state.last.lock().unwrap().clone();
+            let snap = lock(&state.last).clone();
             if let Some(t) = snap {
                 let mut buf = serde_json::to_string(&t).unwrap_or_default();
                 buf.push('\n');
@@ -246,7 +213,6 @@ fn host_conn_loop(state: Arc<HostState>, stream: TcpStream) {
     }
 }
 
-/// accept 线程：绑定失败（房间网段未就绪）逐秒重试；stop 后退出。
 fn host_accept_loop(state: Arc<HostState>) {
     let mut listener: Option<TcpListener> = None;
     while !state.stop.load(Ordering::SeqCst) {
@@ -275,7 +241,6 @@ fn host_accept_loop(state: Arc<HostState>) {
     }
 }
 
-/// 房主侧同步通道句柄（Drop 即停线程）。
 pub struct HostSync {
     state: Arc<HostState>,
 }
@@ -299,7 +264,6 @@ impl HostSync {
         HostSync { state }
     }
 
-    /// UI 设置权威成员表、房主昵称与房主游玩状态；内容有变化才升版本广播。
     pub fn publish(
         &self,
         host_peer_id: &str,
@@ -307,14 +271,13 @@ impl HostSync {
         host_playing: bool,
         host_nick: Option<&str>,
     ) {
-        *self.state.base.lock().unwrap() =
+        *lock(&self.state.base) =
             Some((host_peer_id.to_string(), members.to_vec(), host_playing));
-        *self.state.host_nick.lock().unwrap() =
+        *lock(&self.state.host_nick) =
             host_nick.map(str::trim).filter(|s| !s.is_empty()).map(str::to_string);
         host_rebuild(&self.state);
     }
 
-    /// 成员游玩状态（peer_id → playing；超时未上报的成员回落空闲）。
     pub fn member_playing(&self) -> HashMap<String, bool> {
         let now = Instant::now();
         self.state
@@ -326,12 +289,10 @@ impl HostSync {
             .collect()
     }
 
-    /// 成员昵称（peer_id → nick；仅含已上报昵称的成员）。
     pub fn member_nick(&self) -> HashMap<String, String> {
-        self.state.nicks.lock().unwrap().clone()
+        lock(&self.state.nicks).clone()
     }
 
-    /// 房主关闭房间：广播 close 帧后停全部连接/线程（Drop 兜底杀 awl）。
     pub fn notify_close(&self) {
         self.state.closing.store(true, Ordering::SeqCst);
     }
@@ -343,24 +304,21 @@ impl Drop for HostSync {
     }
 }
 
-// ---------- 成员侧 ----------
-
 struct MemberState {
     stop: AtomicBool,
     connected: AtomicBool,
-    /// 收到房主 close 帧（房主已关闭房间）→ 停重连，UI 据此立即退出
+
     closed: AtomicBool,
-    /// 本机 awl 身份
+
     peer_id: String,
-    /// 本机昵称（hello/status 帧携带；UI 可随时更新）
+
     nick: Mutex<String>,
-    /// 最近收到的快照（take 消费，版本去重由 UI 负责）
+
     inbox: Mutex<Option<SyncTable>>,
-    /// 待发送的游玩状态（UI 线程投递，写线程取走；仅保留最新值）
+
     outbox: Mutex<Option<bool>>,
 }
 
-/// 组装上行帧 JSON（hello/status 通用；昵称空时不带字段）。
 fn up_frame_json(kind: &str, peer_id: &str, nick: &str, playing: bool) -> String {
     let nick_field = if nick.is_empty() {
         String::new()
@@ -375,7 +333,6 @@ fn up_frame_json(kind: &str, peer_id: &str, nick: &str, playing: bool) -> String
     )
 }
 
-/// 单会话：阻塞读 table/close 帧；EOF/错误即返回（外层重连）。
 fn member_session(state: &Arc<MemberState>, stream: TcpStream) {
     let _ = stream.set_nodelay(true);
     if stream.set_read_timeout(Some(READ_TIMEOUT)).is_err() {
@@ -384,9 +341,9 @@ fn member_session(state: &Arc<MemberState>, stream: TcpStream) {
     let Ok(writer_handle) = stream.try_clone() else { return };
     let Ok(hello_writer) = stream.try_clone() else { return };
     let mut writer = hello_writer;
-    // 首帧 hello（带昵称与最新待报状态；无则视为空闲，UI 下一拍会补发真实状态）
-    let hello_nick = state.nick.lock().unwrap().clone();
-    let hello_playing = state.outbox.lock().unwrap().take().unwrap_or(false);
+
+    let hello_nick = lock(&state.nick).clone();
+    let hello_playing = lock(&state.outbox).take().unwrap_or(false);
     let hello = up_frame_json("hello", &state.peer_id, &hello_nick, hello_playing);
     if writer
         .write_all(hello.as_bytes())
@@ -397,7 +354,7 @@ fn member_session(state: &Arc<MemberState>, stream: TcpStream) {
         return;
     }
     state.connected.store(true, Ordering::SeqCst);
-    // 写线程：status 上报（outbox）+ 30s 保活
+
     let wstate = state.clone();
     let writer_thread = std::thread::Builder::new()
         .name("room-sync-member-w".into())
@@ -405,11 +362,11 @@ fn member_session(state: &Arc<MemberState>, stream: TcpStream) {
             let mut writer = writer_handle;
             let mut last_sent = (hello_playing, Instant::now());
             while !wstate.stop.load(Ordering::SeqCst) && !wstate.closed.load(Ordering::SeqCst) {
-                let pending = wstate.outbox.lock().unwrap().take();
+                let pending = lock(&wstate.outbox).take();
                 let due = last_sent.1.elapsed() >= STATUS_KEEPALIVE;
                 if pending.is_some() || due {
                     let playing = pending.unwrap_or(last_sent.0);
-                    let nick = wstate.nick.lock().unwrap().clone();
+                    let nick = lock(&wstate.nick).clone();
                     let frame = up_frame_json("status", &wstate.peer_id, &nick, playing);
                     if writer
                         .write_all(frame.as_bytes())
@@ -417,14 +374,14 @@ fn member_session(state: &Arc<MemberState>, stream: TcpStream) {
                         .and_then(|_| writer.flush())
                         .is_err()
                     {
-                        return; // 写失败 → 会话结束触发重连
+                        return;
                     }
                     last_sent = (playing, Instant::now());
                 }
                 std::thread::sleep(POLL_INTERVAL);
             }
         });
-    // 读线程（本线程）：收 table 帧入收件箱 / close 帧置位
+
     let mut reader = BufReader::new(stream);
     let mut line = String::new();
     loop {
@@ -436,7 +393,7 @@ fn member_session(state: &Arc<MemberState>, stream: TcpStream) {
             Ok(0) => break,
             Ok(_) => {
                 let trimmed = line.trim();
-                // close 帧优先识别（房主已关闭房间 → 立即退出，停重连）
+
                 if serde_json::from_str::<DownTag>(trimmed)
                     .map(|t| t.kind == "close")
                     .unwrap_or(false)
@@ -445,7 +402,7 @@ fn member_session(state: &Arc<MemberState>, stream: TcpStream) {
                     break;
                 }
                 if let Ok(table) = serde_json::from_str::<SyncTable>(trimmed) {
-                    *state.inbox.lock().unwrap() = Some(table);
+                    *lock(&state.inbox) = Some(table);
                 }
             }
             Err(e) if matches!(e.kind(), ErrorKind::WouldBlock | ErrorKind::TimedOut) => {}
@@ -458,7 +415,6 @@ fn member_session(state: &Arc<MemberState>, stream: TcpStream) {
     }
 }
 
-/// 连接线程：断线重试直至 stop / 收到 close。
 fn member_connect_loop(state: Arc<MemberState>) {
     while !state.stop.load(Ordering::SeqCst) && !state.closed.load(Ordering::SeqCst) {
         match TcpStream::connect((HOST_GAME_IP, ROOM_SYNC_PORT)) {
@@ -467,7 +423,7 @@ fn member_connect_loop(state: Arc<MemberState>) {
                 state.connected.store(false, Ordering::SeqCst);
             }
         }
-        // 会话结束/连接失败：退避重试（stop / closed 立即退出）
+
         let deadline = Instant::now() + CONNECT_RETRY;
         while Instant::now() < deadline
             && !state.stop.load(Ordering::SeqCst)
@@ -478,7 +434,6 @@ fn member_connect_loop(state: Arc<MemberState>) {
     }
 }
 
-/// 成员侧同步通道句柄（Drop 即停线程）。
 pub struct MemberSync {
     state: Arc<MemberState>,
 }
@@ -501,19 +456,16 @@ impl MemberSync {
         MemberSync { state }
     }
 
-    /// 取走最新快照（无新帧返回 None；版本去重由 UI 负责）。
     pub fn take_snapshot(&self) -> Option<SyncTable> {
-        self.state.inbox.lock().unwrap().take()
+        lock(&self.state.inbox).take()
     }
 
-    /// 房主是否已关闭房间（收到 close 帧；置位后不再复位的单向标志）。
     pub fn is_closed(&self) -> bool {
         self.state.closed.load(Ordering::SeqCst)
     }
 
-    /// 上报本机游玩状态（连续变化合并为最新值，写线程串行发送）。
     pub fn send_status(&self, playing: bool) {
-        *self.state.outbox.lock().unwrap() = Some(playing);
+        *lock(&self.state.outbox) = Some(playing);
     }
 }
 
@@ -533,7 +485,7 @@ mod tests {
         assert_eq!(with, "{\"type\":\"hello\",\"peer_id\":\"peer1\",\"playing\":true,\"nick\":\"玩家\"}");
         let without = up_frame_json("status", "peer1", "", false);
         assert_eq!(without, "{\"type\":\"status\",\"peer_id\":\"peer1\",\"playing\":false}");
-        // 两种形态都能被房主侧反序列化
+
         let f: UpFrame = serde_json::from_str(&with).unwrap();
         match f {
             UpFrame::Hello { peer_id, nick, playing } => {
@@ -547,7 +499,7 @@ mod tests {
 
     #[test]
     fn up_frame_without_nick_is_backward_compatible() {
-        // 旧版成员帧（无 nick 字段）可解析
+
         let f: UpFrame =
             serde_json::from_str("{\"type\":\"status\",\"peer_id\":\"p\",\"playing\":true}").unwrap();
         match f {
@@ -573,14 +525,14 @@ mod tests {
             last: Mutex::new(None),
         });
         host_rebuild(&state);
-        let t = state.last.lock().unwrap().clone().unwrap();
+        let t = lock(&state.last).clone().unwrap();
         assert_eq!(t.host_nick.as_deref(), Some("房主昵称"));
         assert_eq!(t.members[0].nick.as_deref(), Some("成员昵称"));
     }
 
     #[test]
     fn table_and_close_frames_roundtrip() {
-        // table 帧带昵称序列化 → 成员侧可解析
+
         let t = SyncTable {
             version: 3,
             host_peer_id: "host".into(),
@@ -597,14 +549,14 @@ mod tests {
         let back: SyncTable = serde_json::from_str(&json).unwrap();
         assert_eq!(back.host_nick.as_deref(), Some("H"));
         assert_eq!(back.members[0].nick.as_deref(), Some("M"));
-        // 旧版 table（无昵称字段）可解析
+
         let legacy: SyncTable = serde_json::from_str(
             "{\"version\":1,\"host_peer_id\":\"h\",\"members\":[{\"peer_id\":\"m\",\"ip\":\"i\"}]}",
         )
         .unwrap();
         assert_eq!(legacy.host_nick, None);
         assert_eq!(legacy.members[0].nick, None);
-        // close 帧识别
+
         let tag: DownTag = serde_json::from_str("{\"type\":\"close\"}").unwrap();
         assert_eq!(tag.kind, "close");
     }
