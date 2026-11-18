@@ -135,6 +135,16 @@ impl Launcher {
                     ),
                     separator(),
                     settings_row(
+                        SymbolIcon::new().symbol(Symbol::Import).into(),
+                        t!("自动插卡", "Auto card insert"),
+                        settings_toggle(
+                            self.system.auto_insert_card == Some(true),
+                            true,
+                            context.callback(Message::AutoInsertCardToggled),
+                        ),
+                    ),
+                    separator(),
+                    settings_row(
                         SymbolIcon::new().symbol(Symbol::Directions).into(),
                         t!("机位设置", "Seat position"),
                         StackPanel::new()

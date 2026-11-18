@@ -129,6 +129,7 @@ pub enum Message {
     GameRegionSelected(usize, Option<usize>),
     KeychipChanged(String),
     SkipReaderInitToggled(bool),
+    AutoInsertCardToggled(bool),
 
     SeatSelected(Option<usize>),
 

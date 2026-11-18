@@ -205,6 +205,11 @@ pub fn render(dep: &DeploySnapshot) -> String {
         if let Some(n) = dep.input.shift_down {
             s.push("dinput", "shiftDn", &n.to_string());
         }
+
+        if let Some(n) = dep.input.coin_button {
+            s.push("dinput", "coin", &n.to_string());
+        }
+
         let is_di_button = |n: u32| n < DPAD_CODE_BASE;
         if let Some(n) = dep.input.up_button.filter(|n| is_di_button(*n)) {
             s.push("dinput", "up", &n.to_string());
@@ -571,11 +576,13 @@ mod tests {
         dep.input.down_button = Some(14);
         dep.input.left_button = Some(15);
         dep.input.right_button = Some(16);
+        dep.input.coin_button = Some(10);
         let text = render(&dep);
         assert!(text.contains("up = 13"));
         assert!(text.contains("down = 14"));
         assert!(text.contains("left = 15"));
         assert!(text.contains("right = 16"));
+        assert!(text.contains("coin = 10"));
 
         let mut dep2 = snapshot();
         dep2.input.kind = Some("dinput".into());

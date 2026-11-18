@@ -202,6 +202,8 @@ pub struct SystemConfig {
 
     pub skip_reader_init: Option<bool>,
 
+    pub auto_insert_card: Option<bool>,
+
     pub seat: Option<String>,
 
     pub master: Option<bool>,
@@ -678,6 +680,7 @@ fn load_system_from(path: &Path) -> SystemConfig {
         region: read("region"),
         keychip: read("keychip"),
         skip_reader_init: read("skip_reader_init").map(|v| truthy(&v)),
+        auto_insert_card: read("auto_insert_card").map(|v| truthy(&v)),
         seat: read("seat"),
         master: read("master").map(|v| truthy(&v)),
     }
@@ -692,6 +695,7 @@ fn save_system_to(path: &Path, cfg: &SystemConfig) -> io::Result<()> {
     w.set("system", "region", cfg.region.as_deref().unwrap_or(""));
     w.set("system", "keychip", cfg.keychip.as_deref().unwrap_or(""));
     w.set("system", "skip_reader_init", match cfg.skip_reader_init { Some(true) => "1", Some(false) => "0", None => "", });
+    w.set("system", "auto_insert_card", match cfg.auto_insert_card { Some(true) => "1", Some(false) => "0", None => "", });
     w.set("system", "seat", cfg.seat.as_deref().unwrap_or(""));
     w.set("system", "master", match cfg.master { Some(true) => "1", Some(false) => "0", None => "", });
     w.flush()
@@ -930,6 +934,7 @@ mod tests {
             region: Some("JPN".into()),
             keychip: Some("A69E-01A99999999".into()),
             skip_reader_init: Some(true),
+            auto_insert_card: Some(true),
             seat: Some("A1".into()),
             master: Some(false),
         };
@@ -949,6 +954,7 @@ mod tests {
         assert_eq!(loaded.loglevel, None);
         assert_eq!(loaded.keychip, None);
         assert_eq!(loaded.skip_reader_init, None);
+        assert_eq!(loaded.auto_insert_card, None);
 
         fs::write(&path, "[system]\nskip_reader_init = true\n").unwrap();
         let loaded = load_system_from(&path);

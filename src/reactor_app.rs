@@ -972,6 +972,10 @@ impl Launcher {
                 self.system.skip_reader_init = Some(on);
                 self.save_system();
             }
+            Message::AutoInsertCardToggled(on) => {
+                self.system.auto_insert_card = Some(on);
+                self.save_system();
+            }
 
             Message::CoinExpanderToggled => self.toggle_coin_expander(context),
             Message::CoinAnimTick(epoch, step) => self.tick_coin_anim(epoch, step, context),

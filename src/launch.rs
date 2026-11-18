@@ -419,6 +419,7 @@ pub fn deploy_reader(
     game_ip: Option<&str>,
     card_button: Option<&str>,
     io3_mode: Option<&str>,
+    auto_insert: bool,
 ) -> Result<PathBuf, String> {
     let reader = Path::new(reader_path);
     if !reader.is_file() {
@@ -453,8 +454,12 @@ pub fn deploy_reader(
     }
 
     let mut ini_text = String::new();
+    ini_text.push_str(&format!(
+        "[CardReader]\nauto_insert = {}\n",
+        if auto_insert { "true" } else { "false" }
+    ));
     if let Some(card) = card {
-        ini_text.push_str(&format!("[CardReader]\ncardfile = {card}\n"));
+        ini_text.push_str(&format!("cardfile = {card}\n"));
     }
     if let Some(ip) = game_ip.map(str::trim).filter(|s| !s.is_empty()) {
         ini_text.push_str(&format!("[ServerBox]\ngame_ip = {ip}\n"));
@@ -921,23 +926,27 @@ mod tests {
             Some("192.168.100.101"),
             Some("START"),
             Some("xinput"),
+            false,
         )
         .unwrap();
         assert!(exe.is_file());
         let ini = fs::read_to_string(reader_dir.join("mice/idas.ini")).unwrap();
-        assert!(ini.contains("[CardReader]\ncardfile = 01010409725450755799\n"));
+        assert!(
+            ini.contains("[CardReader]\nauto_insert = false\ncardfile = 01010409725450755799\n")
+        );
         assert!(ini.contains("[ServerBox]\ngame_ip = 192.168.100.101\n"));
         assert!(ini.contains("[io3]\nmode = xinput\n"));
         assert!(ini.contains("[xinput]\ncard = START\n"));
 
-        deploy_reader(&reader, &settings, &detected, Some("0101"), None, None, None).unwrap();
+        deploy_reader(&reader, &settings, &detected, Some("0101"), None, None, None, true).unwrap();
         let ini2 = fs::read_to_string(reader_dir.join("mice/idas.ini")).unwrap();
-        assert!(ini2.contains("[CardReader]\ncardfile = 0101\n"));
+        assert!(ini2.contains("[CardReader]\nauto_insert = true\ncardfile = 0101\n"));
         assert!(!ini2.contains("[io3]"));
         assert!(!ini2.contains("[xinput]"));
 
-        deploy_reader(&reader, &settings, &detected, Some("0101"), None, Some("  "), Some("dinput")).unwrap();
+        deploy_reader(&reader, &settings, &detected, Some("0101"), None, Some("  "), Some("dinput"), false).unwrap();
         let ini3 = fs::read_to_string(reader_dir.join("mice/idas.ini")).unwrap();
+        assert!(ini3.contains("[CardReader]\nauto_insert = false\ncardfile = 0101\n"));
         assert!(ini3.contains("[io3]\nmode = dinput\n"));
         assert!(!ini3.contains("[xinput]"));
 

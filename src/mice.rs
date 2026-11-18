@@ -221,6 +221,12 @@ pub fn render_idas(dep: &DeploySnapshot) -> String {
         bool_str(dep.system.skip_reader_init == Some(true)),
     );
 
+    s.push(
+        "CardReader",
+        "auto_insert",
+        bool_str(dep.system.auto_insert_card == Some(true)),
+    );
+
     if dep.net.simulate == Some(false) {
 
         if let Some(ip) = dep.net.serverbox_ip.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
@@ -624,6 +630,9 @@ mod tests {
              simulateNetwork = true\n\
              skipInitialization = false\n\
              \n\
+             [CardReader]\n\
+             auto_insert = false\n\
+             \n\
              [Coins]\n\
              start = 2\n\
              car = 1\n\
@@ -917,12 +926,29 @@ mod tests {
     fn render_idas_cardreader_cardfile() {
         let mut dep = snapshot();
 
-        assert!(!render_idas(&dep).contains("[CardReader]"));
+        let text = render_idas(&dep);
+        assert!(text.contains("[CardReader]\nauto_insert = false"));
+        assert!(!text.contains("cardfile"));
 
         dep.card = Some("InidCrd12345.png".into());
         let text = render_idas(&dep);
-        assert!(text.contains("[CardReader]
-cardfile = InidCrd12345.png"));
+        assert!(
+            text.contains("[CardReader]\nauto_insert = false\ncardfile = InidCrd12345.png"),
+            "cardfile 应并入既有 [CardReader] 节：\n{text}"
+        );
+    }
+
+    #[test]
+    fn render_idas_auto_insert_same_direction_always_written() {
+        for (v, want) in [(None, "false"), (Some(false), "false"), (Some(true), "true")] {
+            let mut dep = snapshot();
+            dep.system.auto_insert_card = v;
+            let text = render_idas(&dep);
+            assert!(
+                text.contains(&format!("auto_insert = {want}")),
+                "auto_insert_card={v:?} 时应写 auto_insert = {want}：\n{text}"
+            );
+        }
     }
 
     #[test]

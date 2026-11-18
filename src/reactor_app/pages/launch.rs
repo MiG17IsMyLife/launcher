@@ -143,6 +143,13 @@ impl Launcher {
         let detected = self.detected.clone();
 
         let input_cfg = self.input.clone();
+        let auto_insert = self.system.auto_insert_card == Some(true);
+        let region_missing = rec
+            .region
+            .as_deref()
+            .map(str::trim)
+            .filter(|v| !v.is_empty())
+            .is_none();
 
         let serverbox_ip = self.effective_serverbox_ip();
 
@@ -151,6 +158,15 @@ impl Launcher {
         let serverbox_adapter = self.selected_adapter().map(|a| a.friendly.clone());
 
         context.spawn_background(move |_| {
+
+            if region_missing {
+                return Message::LaunchDone {
+                    index,
+                    result: Err(t!("未设置地区，请在该游戏行的下拉配置中选择地区",
+                                   "Region is not set; select it in this game's dropdown").to_string()),
+                    goto: Some(("games".to_string(), Some(index))),
+                };
+            }
 
             if dep.as_ref().and_then(|d| d.keychip()).is_none() {
                 return Message::LaunchDone {
@@ -276,7 +292,7 @@ impl Launcher {
                 } else {
                     (None, None)
                 };
-                match launch::deploy_reader(&r, &settings, &detected, card.as_deref(), game_ip.as_deref(), xi_card, io3_mode) {
+                match launch::deploy_reader(&r, &settings, &detected, card.as_deref(), game_ip.as_deref(), xi_card, io3_mode, auto_insert) {
                     Ok(exe) => (Some(r), Some(exe)),
                     Err(e) => {
                         return Message::LaunchDone {
