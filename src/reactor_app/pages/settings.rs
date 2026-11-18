@@ -100,12 +100,34 @@ impl Launcher {
         });
     }
 
+    fn launcher_update_pending(&self) -> bool {
+        self.update_shared
+            .lock()
+            .map(|s| {
+                s.per_target
+                    .get(&UpdateTarget::Launcher)
+                    .map(|ts| ts.state == UpdateState::Outdated)
+                    .unwrap_or(false)
+            })
+            .unwrap_or(false)
+    }
+
     pub(in crate::reactor_app) fn update_all_loaders(&mut self, context: &ComponentContext<Self>) {
         if self.game_running {
             self.dialog = Dialog::Error {
                 message: t!(
                     "游戏运行中，无法更新；请先退出游戏",
                     "Cannot update while a game is running"
+                )
+                .to_string(),
+            };
+            return;
+        }
+        if self.launcher_update_pending() {
+            self.dialog = Dialog::Error {
+                message: t!(
+                    "启动器有可用更新，请先更新启动器",
+                    "Launcher update available; update the launcher first"
                 )
                 .to_string(),
             };
@@ -192,6 +214,14 @@ impl Launcher {
                 .grid_column(0)
                 .grid_column_span(4),
         )));
+
+        let launcher_pending = {
+            let s = self.update_shared.lock().unwrap();
+            s.per_target
+                .get(&UpdateTarget::Launcher)
+                .map(|ts| ts.state == UpdateState::Outdated)
+                .unwrap_or(false)
+        };
 
         for (i, target) in update::ALL_TARGETS.iter().enumerate() {
             let row = (2 + 2 * i) as i32;
@@ -313,7 +343,9 @@ impl Launcher {
                         .vertical_alignment(VerticalAlignment::Center)
                         .content(t!("取消", "Cancel")),
                 )
-            } else if ts.state == UpdateState::Outdated {
+            } else if ts.state == UpdateState::Outdated
+                && (*target == UpdateTarget::Launcher || !launcher_pending)
+            {
                 View::from(
                     Button::new()
                         .on_click(context.callback(move |_| Message::UpdateLoader(*target)))
@@ -630,6 +662,16 @@ impl Launcher {
                 message: t!(
                     "游戏运行中，无法更新；请先退出游戏",
                     "Cannot update while a game is running"
+                )
+                .to_string(),
+            };
+            return;
+        }
+        if target != UpdateTarget::Launcher && self.launcher_update_pending() {
+            self.dialog = Dialog::Error {
+                message: t!(
+                    "启动器有可用更新，请先更新启动器",
+                    "Launcher update available; update the launcher first"
                 )
                 .to_string(),
             };

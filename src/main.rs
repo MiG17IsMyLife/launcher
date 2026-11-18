@@ -2,7 +2,7 @@
 
 use std::os::windows::ffi::OsStrExt;
 
-pub const APP_VERSION: &str = "1.0.0.1";
+pub const APP_VERSION: &str = "1.0.0.2";
 
 mod awl;
 mod cards;
@@ -137,9 +137,44 @@ fn run_room_watchdog(parent_pid: u32, room_id: &str, keychip: &str, peer_id: &st
     }
 }
 
+fn cleanup_update_leftovers() {
+    let Ok(exe) = std::env::current_exe() else {
+        return;
+    };
+    let Some(dir) = exe.parent() else {
+        return;
+    };
+    let _ = std::fs::remove_file(dir.join("launcher.exe.old"));
+    let _ = std::fs::remove_dir_all(dir.join(".__launcher_backup"));
+    let _ = std::fs::remove_dir_all(dir.join(".__update_launcher"));
+    let _ = std::fs::remove_dir_all(dir.join("tools").join(".__update_launcher"));
+}
+
+fn wait_process_exit(pid: u32) {
+    unsafe {
+        if let Ok(h) = OpenProcess(PROCESS_SYNCHRONIZE, false, pid) {
+            for _ in 0..10 {
+                match WaitForSingleObject(h, 1000) {
+                    WAIT_OBJECT_0 => break,
+                    WAIT_TIMEOUT => continue,
+                    _ => break,
+                }
+            }
+            let _ = CloseHandle(h);
+        }
+    }
+}
+
 fn main() {
 
     let args: Vec<String> = std::env::args().collect();
+    if let Some(pos) = args.iter().position(|a| a == "--self-restart") {
+        if let Some(pid) = args.get(pos + 1).and_then(|p| p.parse::<u32>().ok()) {
+            wait_process_exit(pid);
+        }
+    }
+    cleanup_update_leftovers();
+
     if let Some(pos) = args.iter().position(|a| a == "--room-watchdog") {
         if let Some(p) = args.get(pos + 1..pos + 6) {
             run_room_watchdog(

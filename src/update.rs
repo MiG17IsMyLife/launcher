@@ -9,6 +9,7 @@ use sha2::{Digest, Sha256};
 use zip::ZipArchive;
 
 use windows::core::PCWSTR;
+use windows::Win32::UI::WindowsAndMessaging::AllowSetForegroundWindow;
 use windows::Win32::Networking::WinHttp::{
     WinHttpCloseHandle, WinHttpConnect, WinHttpOpen, WinHttpOpenRequest, WinHttpQueryDataAvailable,
     WinHttpQueryHeaders, WinHttpReadData, WinHttpReceiveResponse, WinHttpSendRequest,
@@ -91,7 +92,7 @@ impl UpdateTarget {
                 "https://gitcode.com/project-sasayaki/awl",
             ],
 
-            UpdateTarget::Launcher => &[],
+            UpdateTarget::Launcher => &["https://gitcode.com/project-sasayaki/launcher"],
         }
     }
 
@@ -407,7 +408,7 @@ pub fn check_updates(index: &UpdateIndex, settings: &Settings) -> HashMap<Update
     map
 }
 
-const HTTP_HEADERS: &str = "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36\r\n";
+const HTTP_HEADERS: &str = "User-Agent: sasayaki-launcher/1.0\r\n";
 
 #[link(name = "winhttp")]
 unsafe extern "system" {
@@ -791,21 +792,6 @@ fn is_owner_repo(path: &str) -> bool {
     segs.len() == 2
 }
 
-fn version_from_asset_name(asset_name: &str, loader: &str) -> Option<String> {
-    let base = asset_name.strip_suffix(".zip")?;
-    let rest = base.strip_prefix(loader)?;
-    let rest = rest.trim_start_matches(['-', '_', ' ', 'v']);
-    let mut first: String = rest.chars().take_while(|c| c.is_ascii_digit() || *c == '.').collect();
-    while first.ends_with('.') {
-        first.pop();
-    }
-    if first.is_empty() {
-        None
-    } else {
-        Some(first)
-    }
-}
-
 fn release_to_loader_for(
     rel: &ReleaseInfo,
     target: UpdateTarget,
@@ -817,8 +803,7 @@ fn release_to_loader_for(
             let loader = target.dir_name();
             return Ok(LoaderRelease {
                 name: loader.to_string(),
-                version: version_from_asset_name(&name_lc, loader)
-                    .unwrap_or_else(|| tag_version.clone()),
+                version: tag_version.clone(),
                 url: asset.browser_download_url.clone(),
                 sha256: asset
                     .digest
@@ -1167,6 +1152,157 @@ pub fn install_zip(
     Ok(())
 }
 
+pub fn install_launcher_zip(
+    zip_path: &Path,
+    cancel: &std::sync::atomic::AtomicBool,
+    progress: &dyn Fn(UpdatePhase, u64, u64),
+) -> Result<(), String> {
+    use std::sync::atomic::Ordering;
+    let base = launcher_dir();
+    progress(UpdatePhase::Extracting, 0, 0);
+    let tmp_extract = base.join(".__update_launcher");
+    let _ = std::fs::remove_dir_all(&tmp_extract);
+    std::fs::create_dir_all(&tmp_extract)
+        .map_err(|e| tf!("创建临时目录失败：{e}", "Failed to create temp dir: {e}"))?;
+    extract_zip(zip_path, &tmp_extract, cancel, &|done, total| {
+        progress(UpdatePhase::Extracting, done, total)
+    })
+    .map_err(|e| {
+        let _ = std::fs::remove_dir_all(&tmp_extract);
+        tf!("解压失败：{e}", "Extraction failed: {e}")
+    })?;
+    let _ = std::fs::remove_file(zip_path);
+
+    if cancel.load(Ordering::Relaxed) {
+        let _ = std::fs::remove_dir_all(&tmp_extract);
+        return Err(t!("已取消更新", "Update cancelled").to_string());
+    }
+
+    let content_root = strip_top_dir(&tmp_extract);
+    let new_exe = content_root.join("launcher.exe");
+    if !new_exe.is_file() {
+        let _ = std::fs::remove_dir_all(&tmp_extract);
+        return Err(t!(
+            "升级包中未找到 launcher.exe",
+            "launcher.exe not found in the update package"
+        )
+        .to_string());
+    }
+
+    progress(UpdatePhase::Installing, 0, 0);
+    let parked_dir = tmp_extract.join(".old");
+    let mut parked: Vec<(PathBuf, PathBuf)> = Vec::new();
+
+    fn merge_copy(
+        src: &Path,
+        dst: &Path,
+        park: &Path,
+        top: bool,
+        parked: &mut Vec<(PathBuf, PathBuf)>,
+    ) -> Result<(), String> {
+        std::fs::create_dir_all(dst).map_err(|e| tf!("安装失败：{e}", "Installation failed: {e}"))?;
+        for entry in std::fs::read_dir(src)
+            .map_err(|e| tf!("安装失败：{e}", "Installation failed: {e}"))?
+            .flatten()
+        {
+            let name = entry.file_name();
+            let lname = name.to_string_lossy().to_lowercase();
+            if top && (lname == "launcher.exe" || lname == "data" || lname == ".old") {
+                continue;
+            }
+            let s = entry.path();
+            let d = dst.join(&name);
+            let p = park.join(&name);
+            if entry.file_type().map(|t| t.is_dir()).unwrap_or(false) {
+                merge_copy(&s, &d, &p, false, parked)?;
+            } else {
+                if d.exists() {
+                    std::fs::create_dir_all(park)
+                        .map_err(|e| tf!("安装失败：{e}", "Installation failed: {e}"))?;
+                    std::fs::rename(&d, &p)
+                        .map_err(|e| tf!("安装失败：{e}", "Installation failed: {e}"))?;
+                    parked.push((p, d.clone()));
+                }
+                std::fs::copy(&s, &d)
+                    .map_err(|e| tf!("安装失败：{e}", "Installation failed: {e}"))?;
+            }
+        }
+        Ok(())
+    }
+
+    if let Err(e) = merge_copy(&content_root, &base, &parked_dir, true, &mut parked) {
+        for (p, d) in &parked {
+            let _ = std::fs::rename(p, d);
+        }
+        let _ = std::fs::remove_dir_all(&tmp_extract);
+        return Err(e);
+    }
+
+    let current_exe = std::env::current_exe().map_err(|e| {
+        let _ = std::fs::remove_dir_all(&tmp_extract);
+        tf!("获取自身路径失败：{e}", "Failed to resolve own path: {e}")
+    })?;
+    let park_exe = parked_dir.join("launcher.exe");
+    std::fs::create_dir_all(&parked_dir)
+        .map_err(|e| tf!("安装失败：{e}", "Installation failed: {e}"))?;
+    std::fs::rename(&current_exe, &park_exe).map_err(|e| {
+        for (p, d) in &parked {
+            let _ = std::fs::rename(p, d);
+        }
+        let _ = std::fs::remove_dir_all(&tmp_extract);
+        tf!("备份失败：{e}", "Backup failed: {e}")
+    })?;
+    if let Err(e) = std::fs::rename(&new_exe, base.join("launcher.exe")) {
+        for (p, d) in &parked {
+            let _ = std::fs::rename(p, d);
+        }
+        let _ = std::fs::rename(&park_exe, &current_exe);
+        let _ = std::fs::remove_dir_all(&tmp_extract);
+        return Err(tf!("安装失败：{e}", "Installation failed: {e}"));
+    }
+
+    let _ = std::fs::remove_dir_all(&tmp_extract);
+
+    progress(UpdatePhase::Done, 1, 1);
+
+    let new_process = base.join("launcher.exe");
+    let self_pid = std::process::id().to_string();
+    let spawned = {
+        use std::os::windows::process::CommandExt;
+        let mut cmd = std::process::Command::new(&new_process);
+        cmd.current_dir(&base);
+        cmd.arg("--self-restart").arg(&self_pid);
+        cmd.creation_flags(0x0100_0000);
+        match cmd.spawn() {
+            Ok(child) => {
+                unsafe {
+                    let _ = AllowSetForegroundWindow(child.id());
+                }
+                true
+            }
+            Err(_) => {
+                let mut cmd = std::process::Command::new(&new_process);
+                cmd.current_dir(&base);
+                cmd.arg("--self-restart").arg(&self_pid);
+                match cmd.spawn() {
+                    Ok(child) => {
+                        unsafe {
+                            let _ = AllowSetForegroundWindow(child.id());
+                        }
+                        true
+                    }
+                    Err(_) => false,
+                }
+            }
+        }
+    };
+    if !spawned {
+        return Err(t!("启动新版本失败", "Failed to launch the new version").to_string());
+    }
+
+    std::process::exit(0)
+}
+
 pub fn download_and_install(
     target: UpdateTarget,
     primary_url: &str,
@@ -1182,9 +1318,6 @@ pub fn download_and_install(
 
     let tmp_extract = base_dir.join(format!(".__update_{}", target.dir_name()));
     let zip_path = base_dir.join(format!(".__update_{}.zip", target.dir_name()));
-    let _ = std::fs::remove_dir_all(&tmp_extract);
-    std::fs::create_dir_all(&tmp_extract)
-        .map_err(|e| tf!("创建临时目录失败：{e}", "Failed to create temp dir: {e}"))?;
 
     let r = http_download_to_file(
         primary_url,
@@ -1215,7 +1348,10 @@ pub fn download_and_install(
         }
     }
 
-    let r = install_zip(&zip_path, base_dir, target, cancel, progress);
+    let r = match target {
+        UpdateTarget::Launcher => install_launcher_zip(&zip_path, cancel, progress),
+        _ => install_zip(&zip_path, base_dir, target, cancel, progress),
+    };
     if r.is_err() {
         let _ = std::fs::remove_file(&zip_path);
     }
@@ -1270,12 +1406,12 @@ mod tests {
     }
 
     #[test]
-    fn launcher_component_has_no_source_yet() {
+    fn launcher_component_has_source() {
 
         assert!(ALL_TARGETS.contains(&UpdateTarget::Launcher));
-        assert!(!UpdateTarget::Launcher.has_update_source());
+        assert!(UpdateTarget::Launcher.has_update_source());
         let r = check_updates(&UpdateIndex::default(), &Settings::default());
-        assert_eq!(
+        assert_ne!(
             r[&UpdateTarget::Launcher].state,
             UpdateState::NotConfigured
         );
@@ -1284,6 +1420,23 @@ mod tests {
             last_version_of(&Settings::default(), UpdateTarget::Launcher).as_deref(),
             Some(crate::APP_VERSION)
         );
+    }
+
+    #[test]
+    fn release_version_from_tag() {
+        let rel = ReleaseInfo {
+            tag_name: "v1.2.3.4".into(),
+            assets: vec![ReleaseAsset {
+                name: "launcher.zip".into(),
+                browser_download_url: "https://x/launcher.zip".into(),
+                digest: None,
+            }],
+            release_status: None,
+            created_at: None,
+        };
+        let lr = release_to_loader_for(&rel, UpdateTarget::Launcher).unwrap();
+        assert_eq!(lr.version, "1.2.3.4");
+        assert_eq!(lr.name, "launcher");
     }
 
     #[test]
@@ -1309,8 +1462,14 @@ mod tests {
             Some("https://gitea.tendokyu.moe/puniru/shaderfix-idas")
         );
 
-        assert_eq!(select_repo(UpdateTarget::Launcher, zh), None);
-        assert_eq!(select_repo(UpdateTarget::Launcher, en), None);
+        assert_eq!(
+            select_repo(UpdateTarget::Launcher, zh),
+            Some("https://gitcode.com/project-sasayaki/launcher")
+        );
+        assert_eq!(
+            select_repo(UpdateTarget::Launcher, en),
+            Some("https://gitcode.com/project-sasayaki/launcher")
+        );
     }
 
     #[test]

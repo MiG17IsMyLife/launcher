@@ -17,6 +17,11 @@
               "crc": "0x606914be",
               "version": "REV B",
               "sb_crc": "0x60496eea"
+          },
+          {
+              "crc": "0xba380f8a",
+              "version": "REV D",
+              "sb_crc": "0x60496eea"            
           }
         ]
     },
@@ -179,6 +184,18 @@
               "sb_crc": "0x3e8207b8"  
           }
         ]
+    },
+    {
+        "name": "InitialD The Arcade Season 6",
+        "game_id": "SDGT",
+        "platform": "ALLS",
+        "loader": "segatools",
+        "image": "logo_dac.png",
+        "support_game": [
+          {
+              "version": "3.41.00"
+          }
+        ]        
     },
     {
         "name": "InitialD The Arcade Season 5",
