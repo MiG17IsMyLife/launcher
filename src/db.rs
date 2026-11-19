@@ -35,6 +35,8 @@ struct Product {
     image: Option<String>,
     loader: Loader,
     builds: Vec<Build>,
+    /// Whether the game can be played in a room (in-store battles).
+    in_store_battles: bool,
 }
 
 struct Build {
@@ -76,6 +78,13 @@ struct RawProduct {
     loader: Option<String>,
     #[serde(default)]
     support_game: Vec<RawBuild>,
+    #[serde(default = "playable_in_rooms")]
+    in_store_battles: bool,
+}
+
+/// Products can be played in rooms unless the database says otherwise.
+fn playable_in_rooms() -> bool {
+    true
 }
 
 #[derive(Deserialize)]
@@ -124,6 +133,7 @@ impl RawDb {
                 image: p.image.clone().filter(|v| !v.is_empty()),
                 loader,
                 builds,
+                in_store_battles: p.in_store_battles,
             }
         };
 
@@ -225,8 +235,9 @@ fn parse_version(s: &str) -> Option<(u32, u32, u32)> {
     Some((v[0], v[1], v[2]))
 }
 
-pub fn game_names() -> Vec<String> {
-    db().games.iter().map(|g| g.name.clone()).collect()
+/// The names of the products that can be played in rooms, in database order.
+pub fn room_game_names() -> Vec<String> {
+    room_games().into_iter().map(|g| g.name).collect()
 }
 
 #[derive(Clone, Debug)]
@@ -235,9 +246,11 @@ pub struct GameEntry {
     pub game_id: Option<String>,
 }
 
-pub fn games() -> Vec<GameEntry> {
+/// The products that can be played in rooms, in database order.
+pub fn room_games() -> Vec<GameEntry> {
     db().games
         .iter()
+        .filter(|g| g.in_store_battles)
         .map(|g| GameEntry { name: g.name.clone(), game_id: g.game_id.clone() })
         .collect()
 }

@@ -295,6 +295,101 @@
               "version": "1.44.00"
           }
         ]
+    },
+    {
+        "name": "Wangan Midnight Maximum Tune 3 JPN",
+        "game_id": "WM3",
+        "platform": "N2",
+        "loader": "kitten",
+        "in_store_battles": false,
+        "support_game": [
+          {
+              "crc": "0xcf5dde93",
+              "version": "A70"
+          }
+        ]
+    },
+    {
+        "name": "Wangan Midnight Maximum Tune 3 EXP",
+        "game_id": "WM3",
+        "platform": "N2",
+        "loader": "kitten",
+        "in_store_battles": false,
+        "support_game": [
+          {
+              "crc": "0xec016afd",
+              "version": "A70"
+          }
+        ]
+    },
+    {
+        "name": "Wangan Midnight Maximum Tune 3DX JPN",
+        "game_id": "W3X",
+        "platform": "N2",
+        "loader": "kitten",
+        "in_store_battles": false,
+        "support_game": [
+          {
+              "crc": "0xfa4b36bc",
+              "version": "C09"
+          }
+        ]
+    },
+    {
+        "name": "Wangan Midnight Maximum Tune 3DX EXP",
+        "game_id": "W3X",
+        "platform": "N2",
+        "loader": "kitten",
+        "in_store_battles": false,
+        "support_game": [
+          {
+              "crc": "0xe47ddd0d",
+              "version": "A20"
+          },
+          {
+              "crc": "0x050db385",
+              "version": "C09"
+          }
+        ]
+    },
+    {
+        "name": "Wangan Midnight Maximum Tune 3DX+ JPN",
+        "game_id": "W3P",
+        "platform": "N2",
+        "loader": "kitten",
+        "in_store_battles": false,
+        "support_game": [
+          {
+              "crc": "0x85a0e7ab",
+              "version": "B02"
+          }
+        ]
+    },
+    {
+        "name": "Wangan Midnight Maximum Tune 3DX+ EXP",
+        "game_id": "W3P",
+        "platform": "N2",
+        "loader": "kitten",
+        "in_store_battles": false,
+        "support_game": [
+          {
+              "crc": "0x827c956b",
+              "version": "B02"
+          }
+        ]
+    },
+    {
+        "name": "Wangan Midnight Maximum Tune 3DX+ CHN",
+        "game_id": "W3P",
+        "platform": "N2",
+        "loader": "kitten",
+        "in_store_battles": false,
+        "support_game": [
+          {
+              "crc": "0x4753d367",
+              "version": "A16"
+          }
+        ]
     }
   ],
   "card_reader": {

@@ -6,11 +6,12 @@
 //! | [`IdasRingEdge`] | Initial D Arcade Stage 6 / 7 / 8, run by mice | [`idas_ringedge`] |
 //! | [`Idac`] | Initial D The Arcade, run by segatools | [`idac`] |
 //! | [`Idz`] | Initial D Arcade Stage Zero, run by segatools | [`idz`] |
+//! | [`Wmmt3`] | Wangan Midnight Maximum Tune 3 / 3DX / 3DX+, run by kitten | [`wmmt3`] |
 //!
 //! Each family implements [`GameFamily`]: what to check before a launch, what to write into
-//! the game folder, and what to start. [`launch_game`] runs those steps in order, with the
-//! checks every game shares before them. The other modules hold what several families
-//! use: the card reader, the graphics patch, the ServerBox and the `initialD.ini` rewrite.
+//! the game folder, and what to start. [`launch_game`] runs those steps in order. The other
+//! modules hold what several families use: the card reader, the graphics patch, the
+//! ServerBox and the `initialD.ini` rewrite.
 
 use std::path::{Path, PathBuf};
 use std::process::Child;
@@ -35,11 +36,13 @@ mod idas;
 mod idas_lindbergh;
 mod idas_ringedge;
 mod idz;
+mod wmmt3;
 
 pub use idac::Idac;
 pub use idas_lindbergh::IdasLindbergh;
 pub use idas_ringedge::IdasRingEdge;
 pub use idz::Idz;
+pub use wmmt3::Wmmt3;
 
 use card_reader::CardReader;
 use serverbox::StaticIp;
@@ -140,6 +143,10 @@ pub struct UiFeatures {
     pub test_mode: bool,
     pub graphics_patch: bool,
     pub companion_executables: bool,
+    /// The region the game runs as is chosen on its row.
+    pub region: bool,
+    /// The game's card is chosen on the card page.
+    pub cards: bool,
     /// The extension shown for the selected card in the game row.
     pub card_extension: &'static str,
 }
@@ -164,12 +171,7 @@ pub trait GameFamily: Sync {
     /// Whether these games have a ServerBox.
     fn has_serverbox(&self) -> bool;
 
-    /// Whether the network is set up enough to start the game.
-    fn network_configured(&self, input: &LaunchInput) -> bool {
-        input.net.ip.is_some()
-    }
-
-    /// Checks beyond the ones every game shares (region, keychip, network).
+    /// Checks that the settings these games need are set.
     fn check(&self, input: &LaunchInput) -> Result<(), LaunchProblem>;
 
     /// Writes the configs and copies the tools into the game folder.
@@ -185,6 +187,7 @@ pub trait GameFamily: Sync {
 /// The family a library record belongs to.
 pub fn family_of(record: &GameRecord) -> &'static dyn GameFamily {
     match record.loader {
+        Loader::Kitten if wmmt3::is_wmmt3(record.game_id.as_deref()) => &Wmmt3,
         Loader::Kitten => &IdasLindbergh,
         Loader::Mice => &IdasRingEdge,
         Loader::Segatools => match segatools::game_kind(record.game_id.as_deref()) {
@@ -197,16 +200,6 @@ pub fn family_of(record: &GameRecord) -> &'static dyn GameFamily {
 /// Checks the settings, prepares the game folder and starts the game.
 pub fn launch_game(input: &LaunchInput) -> Result<RunningGame, LaunchProblem> {
     let family = family_of(&input.record);
-
-    if is_blank(&input.record.region) {
-        return Err(LaunchProblem::needs(t!("page_launch.region_is_not_set"), Fix::GameRow));
-    }
-    if is_blank(&input.system.keychip) {
-        return Err(LaunchProblem::needs(t!("page_launch.keychip_serial_is_not_set"), Fix::System));
-    }
-    if !family.network_configured(input) {
-        return Err(LaunchProblem::needs(t!("page_launch.network_subnet_is_not_configured"), Fix::Network));
-    }
     family.check(input)?;
 
     let prepared = family.prepare(input)?;
@@ -241,6 +234,21 @@ pub fn launch_serverbox(input: &LaunchInput) -> Result<Child, LaunchProblem> {
     family_of(&input.record)
         .launch_serverbox(input)
         .map_err(|e| LaunchProblem::failed(t!("page_launch.serverbox_launch_failed", error = e)))
+}
+
+/// The settings every Initial D game needs: the region chosen on its row, the keychip, and
+/// a network (`network_configured`, which the families judge in their own way).
+fn check_initial_d_settings(input: &LaunchInput, network_configured: bool) -> Result<(), LaunchProblem> {
+    if is_blank(&input.record.region) {
+        return Err(LaunchProblem::needs(t!("page_launch.region_is_not_set"), Fix::GameRow));
+    }
+    if is_blank(&input.system.keychip) {
+        return Err(LaunchProblem::needs(t!("page_launch.keychip_serial_is_not_set"), Fix::System));
+    }
+    if !network_configured {
+        return Err(LaunchProblem::needs(t!("page_launch.network_subnet_is_not_configured"), Fix::Network));
+    }
+    Ok(())
 }
 
 /// The folder of the game's file (the ELF or exe the loader runs).
@@ -327,11 +335,12 @@ mod tests {
     #[test]
     fn ui_features_match_existing_game_rows() {
         let cases = [
-            (Loader::Kitten, Some("SBQZ"), UiFeatures { test_mode: true, graphics_patch: false, companion_executables: false, card_extension: "png" }),
-            (Loader::Mice, Some("SBZZ"), UiFeatures { test_mode: true, graphics_patch: true, companion_executables: false, card_extension: "png" }),
-            (Loader::Segatools, Some("SDGT"), UiFeatures { test_mode: false, graphics_patch: false, companion_executables: true, card_extension: "txt" }),
-            (Loader::Segatools, Some("SDDF"), UiFeatures { test_mode: false, graphics_patch: false, companion_executables: true, card_extension: "txt" }),
-            (Loader::Segatools, None, UiFeatures { test_mode: false, graphics_patch: false, companion_executables: true, card_extension: "txt" }),
+            (Loader::Kitten, Some("SBQZ"), UiFeatures { test_mode: true, graphics_patch: false, region: true, cards: true, companion_executables: false, card_extension: "png" }),
+            (Loader::Mice, Some("SBZZ"), UiFeatures { test_mode: true, graphics_patch: true, region: true, cards: true, companion_executables: false, card_extension: "png" }),
+            (Loader::Segatools, Some("SDGT"), UiFeatures { test_mode: false, graphics_patch: false, region: true, cards: true, companion_executables: true, card_extension: "txt" }),
+            (Loader::Segatools, Some("SDDF"), UiFeatures { test_mode: false, graphics_patch: false, region: true, cards: true, companion_executables: true, card_extension: "txt" }),
+            (Loader::Segatools, None, UiFeatures { test_mode: false, graphics_patch: false, region: true, cards: true, companion_executables: true, card_extension: "txt" }),
+            (Loader::Kitten, Some("W3P"), UiFeatures { test_mode: false, graphics_patch: false, region: false, cards: false, companion_executables: false, card_extension: "bin" }),
         ];
         for (loader, id, expected) in cases {
             let rec = record(loader, id);
@@ -369,6 +378,7 @@ mod tests {
         assert!(family_of(&record(Loader::Mice, Some("SBZZ"))).has_serverbox());
         assert!(!family_of(&record(Loader::Segatools, Some("SDGT"))).has_serverbox());
         assert!(!family_of(&record(Loader::Segatools, Some("SDDF"))).has_serverbox());
+        assert!(!family_of(&record(Loader::Kitten, Some("W3P"))).has_serverbox());
     }
 
     #[test]

@@ -591,3 +591,7 @@ main:
 
 netinfo:
   adapter_label: "%{name} (%{description})"
+
+wmmt3:
+  failed_to_write_config: "Failed to write kitten's config.ini (%{path}): %{error}"
+  no_serverbox: "Wangan Midnight Maximum Tune 3 has no ServerBox"

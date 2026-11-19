@@ -8,7 +8,6 @@ use crate::storage::{DPAD_CODE_BASE, GameRecord};
 use rust_i18n::t;
 
 use super::message::Message;
-use super::pages::games::{ROW_COVER_H, ROW_COVER_W};
 use super::Launcher;
 
 pub(super) fn row_chip(label: &str) -> View {
@@ -62,22 +61,17 @@ pub(super) fn record_matches_product(game: &GameRecord, product: &str) -> bool {
     }
 }
 
-pub(super) fn row_placeholder(name: &str) -> View {
-    let ch: String = name.chars().take(3).collect();
-    Border::new()
-        .width(ROW_COVER_W)
-        .height(ROW_COVER_H)
-        .corner_radius(4.0)
-        .background(ThemeBrush::CardStroke)
-        .content(
-            TextBlock::new()
-                .text(ch)
-                .font_size(18.0)
-                .font_weight(FontWeight::SEMI_BOLD)
-                .opacity(0.5)
-                .horizontal_alignment(HorizontalAlignment::Center)
-                .vertical_alignment(VerticalAlignment::Center),
-        )
+/// The cover shown for a game that has neither a cover of its own nor a built-in one.
+const FALLBACK_COVER_PNG: &[u8] = include_bytes!("../assets/cover_wip.png");
+
+/// The fallback cover, fitted into `width` × `height`.
+pub(super) fn fallback_cover(width: f64, height: f64) -> View {
+    Image::new()
+        .source_data(EncodedImage::new(std::sync::Arc::<[u8]>::from(FALLBACK_COVER_PNG)))
+        .width(width)
+        .height(height)
+        .stretch(Stretch::Uniform)
+        .into()
 }
 
 pub(super) fn settings_section(title: &str, rows: Vec<KeyedView>) -> View {

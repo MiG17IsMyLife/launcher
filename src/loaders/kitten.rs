@@ -21,7 +21,8 @@ pub struct DeploySnapshot {
     pub game_id: Option<String>,
 }
 
-fn log_level_num(v: &str) -> Option<u32> {
+/// kitten's `[sysconf] log_level` for a launcher log level.
+pub fn log_level_num(v: &str) -> Option<u32> {
     match v.trim().to_ascii_lowercase().as_str() {
         "error" => Some(5),
         "warn" => Some(4),
@@ -249,12 +250,14 @@ pub fn render(dep: &DeploySnapshot) -> String {
 
 const EXCLUDE_FILES: &[&str] = &["config.ini", "sram.bin", "eeprom.bin"];
 
-pub fn deploy(
-    record: &GameRecord,
-    tool_dir: &Path,
-    dep: &DeploySnapshot,
-) -> Result<PathBuf, String> {
-    let game = Path::new(&record.path);
+/// kitten's config file in a game folder.
+pub fn config_path(game_dir: &Path) -> PathBuf {
+    game_dir.join("kitten").join("config.ini")
+}
+
+/// Copies kitten's files from `tool_dir` into the folder of the game file `game`; returns
+/// the kitten.exe there, which starts the game.
+pub fn install(tool_dir: &Path, game: &Path) -> Result<PathBuf, String> {
     if !game.is_file() {
         return Err(t!("common.game_file_does_not_exist", game = game.display()).to_string());
     }
@@ -264,8 +267,20 @@ pub fn deploy(
     if !game_dir.is_dir() {
         return Err(t!("common.game_directory_does_not_exist", game_dir = game_dir.display()).to_string());
     }
-
     copy_tool_files(tool_dir, game_dir, EXCLUDE_FILES, "kitten")?;
+    Ok(game_dir.join("kitten.exe"))
+}
+
+/// Installs kitten for an Initial D game and writes its `kitten\config.ini` and the
+/// `mice\config.ini` its card reader reads.
+pub fn deploy(
+    record: &GameRecord,
+    tool_dir: &Path,
+    dep: &DeploySnapshot,
+) -> Result<PathBuf, String> {
+    let game = Path::new(&record.path);
+    let kitten_exe = install(tool_dir, game)?;
+    let game_dir = kitten_exe.parent().unwrap_or(Path::new("."));
 
     let cfg_dir = game_dir.join("kitten");
     fs::create_dir_all(&cfg_dir)
@@ -286,7 +301,7 @@ pub fn deploy(
         .map_err(|e| t!("kitten.failed_to_create_mice_config", mice_dir = mice_dir.display(), error = e).to_string())?;
     mice::write_atomic(&mice_dir.join("config.ini"), &mice::render_config(&mice_dep, mice::MiceTarget::Game))?;
 
-    Ok(game_dir.join("kitten.exe"))
+    Ok(kitten_exe)
 }
 
 fn write_config(cfg_dir: &Path, dep: &DeploySnapshot) -> Result<(), String> {

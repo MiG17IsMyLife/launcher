@@ -13,7 +13,7 @@ use crate::storage::GameRecord;
 use crate::reactor_app::Launcher;
 use crate::reactor_app::message::{CompanionKind, Dialog, IdentifyPayload, IcfPayload, Message, RowAction};
 use crate::reactor_app::state::PendingAdd;
-use crate::reactor_app::widgets::{make_id, now_secs, record_db_match, row_chip, row_placeholder, same_path, separator, settings_row, settings_row_sub, settings_toggle, spawn_anim_tick};
+use crate::reactor_app::widgets::{make_id, now_secs, record_db_match, fallback_cover, row_chip, same_path, separator, settings_row, settings_row_sub, settings_toggle, spawn_anim_tick};
 
 pub(in crate::reactor_app) const ROW_COVER_W: f64 = 104.0;
 pub(in crate::reactor_app) const ROW_COVER_H: f64 = 68.0;
@@ -158,7 +158,7 @@ impl Launcher {
                     );
                 }
             }
-            rendered.unwrap_or_else(|| row_placeholder(&game.name).into())
+            rendered.unwrap_or_else(|| fallback_cover(ROW_COVER_W, ROW_COVER_H))
         };
 
         let mut parts: Vec<String> = Vec::new();
@@ -301,11 +301,12 @@ impl Launcher {
                         },
                     ),
                 ),
+            ];
 
-                KeyedView::new("drop-sep-cards", separator()),
-                KeyedView::new(
+            if features.cards {
+                rows.push(KeyedView::new("drop-sep-cards", separator()));
+                rows.push(KeyedView::new(
                     "drop-cards",
-
                     settings_row_sub(
                         SymbolIcon::new().symbol(Symbol::List).into(),
                         &t!("common.card_select"),
@@ -317,31 +318,33 @@ impl Launcher {
                             }))
                             .content(t!("page_games.enter").to_string()),
                     ),
-                ),
-            ];
+                ));
+            }
 
-            let region_items: Vec<String> = GAME_REGIONS.iter().map(|v| v.to_string()).collect();
-            let region_idx = GAME_REGIONS
-                .iter()
-                .position(|v| Some(*v) == game.region.as_deref());
-            rows.push(KeyedView::new("drop-sep-region", separator()));
-            rows.push(KeyedView::new(
-                "drop-region",
-                settings_row(
-                    SymbolIcon::new().symbol(Symbol::World).into(),
-                    "Region",
-                    ComboBox::new()
-                        .width(180.0)
-                        .items_source(region_items)
-                        .selected_index(region_idx)
-                        .placeholder_text(t!("page_games.select_region"))
-                        .on_selection_changed(
-                            context.callback(move |i| Message::GameRegionSelected(index, i)),
-                        )
-                        .vertical_alignment(VerticalAlignment::Center)
-                        .into(),
-                ),
-            ));
+            if features.region {
+                let region_items: Vec<String> = GAME_REGIONS.iter().map(|v| v.to_string()).collect();
+                let region_idx = GAME_REGIONS
+                    .iter()
+                    .position(|v| Some(*v) == game.region.as_deref());
+                rows.push(KeyedView::new("drop-sep-region", separator()));
+                rows.push(KeyedView::new(
+                    "drop-region",
+                    settings_row(
+                        SymbolIcon::new().symbol(Symbol::World).into(),
+                        "Region",
+                        ComboBox::new()
+                            .width(180.0)
+                            .items_source(region_items)
+                            .selected_index(region_idx)
+                            .placeholder_text(t!("page_games.select_region"))
+                            .on_selection_changed(
+                                context.callback(move |i| Message::GameRegionSelected(index, i)),
+                            )
+                            .vertical_alignment(VerticalAlignment::Center)
+                            .into(),
+                    ),
+                ));
+            }
 
                 if features.graphics_patch {
                     rows.insert(1, KeyedView::new("drop-sep-gfx", separator()));

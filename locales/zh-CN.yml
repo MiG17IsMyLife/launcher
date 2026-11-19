@@ -591,3 +591,7 @@ main:
 
 netinfo:
   adapter_label: "%{name}（%{description}）"
+
+wmmt3:
+  failed_to_write_config: "写入 kitten 的 config.ini 失败（%{path}）：%{error}"
+  no_serverbox: "湾岸午夜极速 3 没有 ServerBox"

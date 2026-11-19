@@ -9,7 +9,7 @@ use crate::storage::GameRecord;
 
 use rust_i18n::t;
 
-use super::{CardKind, UiFeatures, GameFamily, LaunchInput, LaunchProblem, Prepared, Started, alls};
+use super::{check_initial_d_settings, CardKind, UiFeatures, GameFamily, LaunchInput, LaunchProblem, Prepared, Started, alls};
 use crate::loaders::segatools;
 
 pub struct Idz;
@@ -19,6 +19,8 @@ impl GameFamily for Idz {
         UiFeatures {
             test_mode: false,
             graphics_patch: false,
+            region: true,
+            cards: true,
             companion_executables: true,
             card_extension: "txt",
         }
@@ -35,11 +37,8 @@ impl GameFamily for Idz {
         false
     }
 
-    fn network_configured(&self, input: &LaunchInput) -> bool {
-        alls::network_configured(input)
-    }
-
     fn check(&self, input: &LaunchInput) -> Result<(), LaunchProblem> {
+        check_initial_d_settings(input, alls::network_configured(input))?;
         alls::check(input)
     }
 

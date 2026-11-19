@@ -198,7 +198,7 @@ impl Launcher {
                 )
                 .into(),
             Dialog::RoomCreate { name, game, password } => {
-                let games = crate::db::game_names();
+                let games = crate::db::room_game_names();
                 ContentDialog::new()
                     .title(t!("page_dialog.create_room_title"))
                     .primary_button_text(t!("page_dialog.create"))

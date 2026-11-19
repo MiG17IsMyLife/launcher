@@ -1,9 +1,6 @@
 //! What Initial D Arcade Stage 4–8 have in common, whichever loader runs them: the
-//! picodaemon card reader, a ServerBox, and the `-b <game file>` command line.
+//! picodaemon card reader and a ServerBox.
 
-use std::os::windows::process::CommandExt;
-use std::path::{Path, PathBuf};
-use std::process::{Child, Command};
 use std::thread;
 use std::time::Duration;
 
@@ -11,8 +8,6 @@ use rust_i18n::t;
 
 use super::card_reader::{self, CardReader, ReaderSettings};
 use super::{Fix, LaunchInput, LaunchProblem, Prepared, Started, game_dir_of, is_blank, serverbox};
-use crate::storage::{GameRecord, launcher_dir};
-use crate::win_util::CREATE_NO_WINDOW;
 
 /// How long the card reader gets to start before the game does.
 const READER_BOOT_WAIT: Duration = Duration::from_secs(1);
@@ -73,7 +68,7 @@ pub fn start(input: &LaunchInput, prepared: Prepared) -> Result<Started, LaunchP
         thread::sleep(READER_BOOT_WAIT);
     }
 
-    match spawn_game(&input.record, &prepared.loader) {
+    match crate::loaders::start_game(&input.record, &prepared.loader) {
         Ok(game) => Ok(Started {
             game,
             helpers,
@@ -88,24 +83,3 @@ pub fn start(input: &LaunchInput, prepared: Prepared) -> Result<Started, LaunchP
     }
 }
 
-/// Starts `loader -b <file>` in the folder of the record's file (`-t` in test mode).
-pub fn spawn_game(record: &GameRecord, loader: &Path) -> Result<Child, String> {
-    let game = PathBuf::from(&record.path);
-    if !game.is_file() {
-        return Err(t!("common.game_file_does_not_exist", game = game.display()).to_string());
-    }
-    let game_dir = game.parent().map(Path::to_path_buf).unwrap_or_else(launcher_dir);
-    if !game_dir.is_dir() {
-        return Err(t!("common.game_directory_does_not_exist", game_dir = game_dir.display()).to_string());
-    }
-    // Only the file name: kitten splits a full path at its spaces.
-    let file = game.file_name().map(PathBuf::from).unwrap_or_else(|| game.clone());
-
-    let mut cmd = Command::new(loader);
-    cmd.current_dir(&game_dir).arg("-b").arg(&file).creation_flags(CREATE_NO_WINDOW);
-    if record.test_mode == Some(true) {
-        cmd.arg("-t");
-    }
-    cmd.spawn()
-        .map_err(|e| t!("launch.failed_to_start_loader", loader = loader.display(), error = e).to_string())
-}

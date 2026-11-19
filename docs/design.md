@@ -1,7 +1,7 @@
 # Sasayaki Launcher (Dnet)
 
 A Windows launcher that starts the Initial D series of arcade games through three loaders, **kitten / mice / segatools**:
-kitten runs **D4/D5** (Lindbergh ELF), mice runs **D6/D7/D8** (RingEdge exe), and segatools runs **IDAC (InitialD The Arcade, ALLS) and IDZ (InitialD Arcade Stage Zero, Nu)**.
+kitten runs **D4/D5** (Lindbergh ELF), mice runs **D6/D7/D8** (RingEdge exe), and segatools runs **IDAC (InitialD The Arcade, ALLS) and IDZ (InitialD Arcade Stage Zero, Nu)**. kitten also runs **Wangan Midnight Maximum Tune 3 / 3DX / 3DX+** (Namco System N2 ELF).
 
 - **Stack**: Rust + **windows-reactor** (Microsoft's official declarative WinUI 3 framework), giving a genuine native Windows 11 interface.
 - **Native look**: Mica backdrop, Fluent controls, light/dark theme following the system; a 1180×720 client area, with an embedded icon and version resource (`build.rs` reads `APP_VERSION` from `main.rs`).
@@ -335,16 +335,19 @@ The games are grouped into families that are launched the same way (`src/games/`
 | `IdasRingEdge` | Initial D Arcade Stage 6 / 7 / 8 | mice | INID PNG, picodaemon reader | yes |
 | `Idac` | Initial D The Arcade | segatools (idachook) | Aime | no |
 | `Idz` | Initial D Arcade Stage Zero | segatools (idzhook) | Aime | no |
+| `Wmmt3` | Wangan Midnight Maximum Tune 3 / 3DX / 3DX+ | kitten | (in kitten's config) | no |
 
-`games::family_of` picks the family from the record's loader and game id. Each family implements `GameFamily`:
+`games::family_of` picks the family from the record's loader and game id (kitten games with the game id `WM3` / `W3X` / `W3P` are `Wmmt3`). Each family implements `GameFamily`:
 
 - `ui_features`: the game row controls and selected-card extension; `card_kind`: the card page format and artwork (unknown IDs retain the existing ID5 fallback);
-- `check`: the settings this family needs, beyond the region, keychip and network that every game needs;
+- `check`: the settings this family needs (the Initial D families all need the region, keychip and network);
 - `prepare`: write the configs and copy the tools into the game folder;
 - `start`: start the helpers (card reader, amdaemon) and the game, and say what to end when it exits;
 - `launch_serverbox`: start the ServerBox, for the families that have one.
 
 `games::launch_game` runs these in order (sections 1.1–1.7 describe what each family does), and adds the ServerBox's static IP between `prepare` and `start` for families with a ServerBox. The interface gathers a `LaunchInput` from the settings in effect and shows the result; a `LaunchProblem` names the page where the user can fix a missing setting. The game row and card page take their family-specific choices from these methods. The ServerBox row remains conditional on the matched build having a ServerBox CRC.
+
+**Wangan Midnight Maximum Tune 3 / 3DX / 3DX+** (`games/wmmt3.rs`): the launch copies kitten's files next to the game's `main`, sets the launcher's settings in `kitten\config.ini`, and starts `kitten.exe -b main`. KittenTools keeps every setting of these games in its `[wmmt3]` section (apart from `[sysconf] log_level`), so the launcher does not rebuild that file: it sets only `[sysconf] log_level` (System page) and `[wmmt3] free_play` (coin settings), when they are set, and leaves the rest of the file as it is, to be edited by hand. These games need no keychip, region or subnet, and have no card reader program, ServerBox, test mode switch (the test button is a key) or card page yet. They are not offered in rooms: their linked play needs the cabinets in one /24 network that carries multicast, which the rooms do not provide. Without a cover of its own, a game shows the "work in progress" image (`src/assets/cover_wip.png`).
 
 **Adding a game family**: write `src/games/<family>.rs` implementing `GameFamily`, and return it from `family_of`. Shared steps (card reader, graphics patch, ServerBox, `initialD.ini`) are in their own modules; the loader modules in `src/loaders/` only render config files.
 
@@ -400,7 +403,7 @@ A **hand-maintained** nested JSON file (embedded at build time). Top-level struc
 }
 ```
 
-- Products: D4/D4kai/D5/D5EXP (kitten), D6AA JPN/EXP/CHN, D7AAX JPN/CHN, D8 JPN/EXP (mice), **IDAC Season 1~6 (SDGT, version-only entries)**, **IDZ / IDZ Ver.2 (SDDF), IDZ CHN (SDER)** (segatools).
+- Products: D4/D4kai/D5/D5EXP (kitten), D6AA JPN/EXP/CHN, D7AAX JPN/CHN, D8 JPN/EXP (mice), **IDAC Season 1~6 (SDGT, version-only entries)**, **IDZ / IDZ Ver.2 (SDDF), IDZ CHN (SDER)** (segatools), **WMMT3 JPN/EXP (WM3), 3DX JPN/EXP (W3X), 3DX+ JPN/EXP/CHN (W3P)** (kitten, N2; versions are the builds' Namco revision letters, e.g. `B02`). A product with `"in_store_battles": false` is not offered in rooms.
 - Adding a game matches a build of a product by "file type → loader + CRC". `sb_crc` is the CRC of that build's ServerBox (missing / null / an empty string all mean no ServerBox, and the ServerBox row is not shown). The ICF1 path matches `game_id + version (2 or 3 parts, compared for equality)`.
 - `card_reader` is used for the card reader's CRC check (when picodaemon is provisioned into a game folder, an existing file is checked against it).
 
@@ -432,7 +435,7 @@ cargo test              # 200+ unit tests (CRC reproduction / database lookup / 
 │   ├── reactor_app.rs    # WinUI 3 main component (navigation / top bar / status bar / message dispatch) + the pages and dialogs under reactor_app/
 │   ├── games/            # The game families and how each is launched (see "Game families")
 │   │   ├── mod.rs        # GameFamily trait, LaunchInput, launch_game / launch_serverbox, family_of
-│   │   ├── idas_lindbergh.rs, idas_ringedge.rs, idac.rs, idz.rs   # one family each
+│   │   ├── idas_lindbergh.rs, idas_ringedge.rs, idac.rs, idz.rs, wmmt3.rs   # one family each
 │   │   ├── idas.rs, alls.rs                # steps the IDAS / segatools families share
 │   │   ├── card_reader.rs  # picodaemon card reader: provisioning, idas.ini, start (with unit tests)
 │   │   ├── gfx_patch.rs    # winmm.dll + shaderfix graphics patch (with unit tests)

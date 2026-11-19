@@ -236,7 +236,7 @@ impl Launcher {
             };
             return;
         };
-        let games = crate::db::games();
+        let games = crate::db::room_games();
         let Some(entry) = games.get(game_idx) else {
             self.dialog = Dialog::Error {
                 message: t!("page_room.selected_game_does_not_exist").to_string(),
@@ -569,7 +569,7 @@ impl Launcher {
                 match dir.my_room(&keychip) {
                     Ok(Some(room)) => {
 
-                        let game_id = crate::db::games()
+                        let game_id = crate::db::room_games()
                             .into_iter()
                             .find(|g| g.name == room.game)
                             .and_then(|g| g.game_id);
@@ -1172,7 +1172,7 @@ impl Launcher {
                                             .width(280.0)
                                             .items_source({
                                                 let mut items = vec![t!("page_room.all_games").to_string()];
-                                                items.extend(crate::db::game_names());
+                                                items.extend(crate::db::room_game_names());
                                                 items
                                             })
                                             .selected_index(

@@ -14,26 +14,6 @@ const PANEL_COVER_H: f64 = 112.0;
 const FALLBACK_WIN_W: f64 = 1180.0;
 const FALLBACK_WIN_H: f64 = 720.0;
 
-fn panel_cover_placeholder(name: &str) -> View {
-    let ch: String = name.chars().take(4).collect();
-    Border::new()
-        .width(PANEL_COVER_W)
-        .height(PANEL_COVER_H)
-        .corner_radius(8.0)
-        .background(ThemeBrush::CardStroke)
-        .content(
-            TextBlock::new()
-                .text(ch)
-                .font_size(24.0)
-                .font_weight(FontWeight::SEMI_BOLD)
-                .opacity(0.5)
-                .text_wrapping(TextWrapping::Wrap)
-                .horizontal_alignment(HorizontalAlignment::Center)
-                .vertical_alignment(VerticalAlignment::Center),
-        )
-        .into()
-}
-
 impl Launcher {
 
     pub(in crate::reactor_app) fn launch_overlay_view(
@@ -87,7 +67,7 @@ impl Launcher {
                     );
                 }
             }
-            rendered.unwrap_or_else(|| panel_cover_placeholder(&game.name))
+            rendered.unwrap_or_else(|| crate::reactor_app::widgets::fallback_cover(PANEL_COVER_W, PANEL_COVER_H))
         };
 
         let status_row: View = if running {

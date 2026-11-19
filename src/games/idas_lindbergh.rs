@@ -12,7 +12,7 @@ use std::process::Child;
 
 use rust_i18n::t;
 
-use super::{CardKind, UiFeatures, GameFamily, LaunchInput, LaunchProblem, Prepared, Started, idas, initiald, serverbox};
+use super::{check_initial_d_settings, CardKind, UiFeatures, GameFamily, LaunchInput, LaunchProblem, Prepared, Started, idas, initiald, serverbox};
 use crate::db;
 use crate::loaders::{self, kitten};
 use crate::storage::{GameRecord, GraphicsConfig};
@@ -24,6 +24,8 @@ impl GameFamily for IdasLindbergh {
         UiFeatures {
             test_mode: true,
             graphics_patch: false,
+            region: true,
+            cards: true,
             companion_executables: false,
             card_extension: "png",
         }
@@ -42,6 +44,7 @@ impl GameFamily for IdasLindbergh {
     }
 
     fn check(&self, input: &LaunchInput) -> Result<(), LaunchProblem> {
+        check_initial_d_settings(input, input.net.ip.is_some())?;
         idas::check(input)
     }
 
@@ -60,7 +63,7 @@ impl GameFamily for IdasLindbergh {
     fn launch_serverbox(&self, input: &LaunchInput) -> Result<Child, String> {
         let (sb_rec, _) = serverbox::prepare(&input.record)?;
         let loader = deploy(&sb_rec, input, serverbox_snapshot(input))?;
-        idas::spawn_game(&sb_rec, &loader).map_err(|e| format!("ServerBox {e}"))
+        loaders::start_game(&sb_rec, &loader).map_err(|e| format!("ServerBox {e}"))
     }
 }
 

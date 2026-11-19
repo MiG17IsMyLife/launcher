@@ -8,11 +8,14 @@
 //! finds the loader executables, either set by hand in `data\settings.json` or found next
 //! to the launcher.
 
+use std::os::windows::process::CommandExt;
 use std::path::{Path, PathBuf};
+use std::process::{Child, Command};
 
 use rust_i18n::t;
 
 use crate::storage::{GameRecord, Loader, Settings, launcher_dir};
+use crate::win_util::CREATE_NO_WINDOW;
 
 pub mod kitten;
 pub mod mice;
@@ -117,4 +120,27 @@ pub fn resolve_loader(
             Ok(p)
         }
     }
+}
+
+/// Starts kitten or mice as `<loader> -b <file>` in the folder of the record's file (with
+/// `-t` in test mode), without a console window.
+pub fn start_game(record: &GameRecord, loader: &Path) -> Result<Child, String> {
+    let game = PathBuf::from(&record.path);
+    if !game.is_file() {
+        return Err(t!("common.game_file_does_not_exist", game = game.display()).to_string());
+    }
+    let game_dir = game.parent().map(Path::to_path_buf).unwrap_or_else(launcher_dir);
+    if !game_dir.is_dir() {
+        return Err(t!("common.game_directory_does_not_exist", game_dir = game_dir.display()).to_string());
+    }
+    // Only the file name: kitten splits a full path at its spaces.
+    let file = game.file_name().map(PathBuf::from).unwrap_or_else(|| game.clone());
+
+    let mut cmd = Command::new(loader);
+    cmd.current_dir(&game_dir).arg("-b").arg(&file).creation_flags(CREATE_NO_WINDOW);
+    if record.test_mode == Some(true) {
+        cmd.arg("-t");
+    }
+    cmd.spawn()
+        .map_err(|e| t!("launch.failed_to_start_loader", loader = loader.display(), error = e).to_string())
 }

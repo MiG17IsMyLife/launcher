@@ -1214,7 +1214,7 @@ impl Launcher {
                 };
                 self.room_filter_idx = games_idx;
                 self.room_filter_game_id = games_idx.and_then(|i| {
-                    crate::db::games().get(i).map(|g| {
+                    crate::db::room_games().get(i).map(|g| {
                         g.game_id.clone().unwrap_or_else(|| g.name.clone())
                     })
                 });

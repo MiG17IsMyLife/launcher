@@ -12,7 +12,7 @@ use std::process::Child;
 
 use rust_i18n::t;
 
-use super::{CardKind, UiFeatures, GameFamily, LaunchInput, LaunchProblem, Prepared, Started, game_dir_of, gfx_patch, idas, initiald, serverbox};
+use super::{check_initial_d_settings, CardKind, UiFeatures, GameFamily, LaunchInput, LaunchProblem, Prepared, Started, game_dir_of, gfx_patch, idas, initiald, serverbox};
 use crate::loaders::{self, mice};
 use crate::storage::{GameRecord, GraphicsConfig};
 
@@ -23,6 +23,8 @@ impl GameFamily for IdasRingEdge {
         UiFeatures {
             test_mode: true,
             graphics_patch: true,
+            region: true,
+            cards: true,
             companion_executables: false,
             card_extension: "png",
         }
@@ -41,6 +43,7 @@ impl GameFamily for IdasRingEdge {
     }
 
     fn check(&self, input: &LaunchInput) -> Result<(), LaunchProblem> {
+        check_initial_d_settings(input, input.net.ip.is_some())?;
         idas::check(input)
     }
 
@@ -59,7 +62,7 @@ impl GameFamily for IdasRingEdge {
         let (sb_rec, sb_dir) = serverbox::prepare(&input.record)?;
         deploy(&sb_rec, &sb_dir, input, &serverbox_snapshot(input), mice::MiceTarget::ServerBox)?;
         let mice_exe = loaders::resolve_loader(&sb_rec, &input.settings, &input.loaders)?;
-        idas::spawn_game(&sb_rec, &mice_exe).map_err(|e| format!("ServerBox {e}"))
+        loaders::start_game(&sb_rec, &mice_exe).map_err(|e| format!("ServerBox {e}"))
     }
 }
 

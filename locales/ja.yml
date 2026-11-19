@@ -591,3 +591,7 @@ main:
 
 netinfo:
   adapter_label: "%{name}（%{description}）"
+
+wmmt3:
+  failed_to_write_config: "kitten の config.ini の書き込みに失敗しました（%{path}）: %{error}"
+  no_serverbox: "湾岸ミッドナイト マキシマムチューン3 には ServerBox がありません"
