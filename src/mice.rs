@@ -650,7 +650,7 @@ mod tests {
             let text = render_idas(&dep);
             assert!(
                 text.contains(&format!("skipInitialization = {want}")),
-                "skip_reader_init={skip:?} 时应写 skipInitialization = {want}：\n{text}"
+                "skip_reader_init={skip:?} should write skipInitialization = {want}:\n{text}"
             );
         }
     }
@@ -664,11 +664,11 @@ mod tests {
             let text = render_idas(&dep);
             assert!(
                 text.contains("offlineMode = false"),
-                "simulate={sim:?} 时应写 offlineMode = false：\n{text}"
+                "simulate={sim:?} should write offlineMode = false:\n{text}"
             );
             assert!(
                 text.contains(&format!("simulateNetwork = {sim_net}")),
-                "simulate={sim:?} 时应写 simulateNetwork = {sim_net}：\n{text}"
+                "simulate={sim:?} should write simulateNetwork = {sim_net}:\n{text}"
             );
         }
     }
@@ -880,7 +880,7 @@ mod tests {
             .unwrap()
             .modified()
             .unwrap();
-        assert_eq!(mtime_before, mtime_after, "内容一致不应重写配置");
+        assert_eq!(mtime_before, mtime_after, "an unchanged config should not be rewritten");
     }
 
     #[test]
@@ -934,7 +934,7 @@ mod tests {
         let text = render_idas(&dep);
         assert!(
             text.contains("[CardReader]\nauto_insert = false\ncardfile = InidCrd12345.png"),
-            "cardfile 应并入既有 [CardReader] 节：\n{text}"
+            "cardfile should join the existing [CardReader] section:\n{text}"
         );
     }
 
@@ -946,7 +946,7 @@ mod tests {
             let text = render_idas(&dep);
             assert!(
                 text.contains(&format!("auto_insert = {want}")),
-                "auto_insert_card={v:?} 时应写 auto_insert = {want}：\n{text}"
+                "auto_insert_card={v:?} should write auto_insert = {want}:\n{text}"
             );
         }
     }
@@ -973,11 +973,11 @@ mod tests {
         let text = render_idas(&dep);
         assert!(
             text.contains("bind_ip = 192.168.100.101"),
-            "应写出 [ServerBox] bind_ip：\n{text}"
+            "[ServerBox] bind_ip should be written:\n{text}"
         );
         assert!(
             text.find("bind_ip = 192.168.100.101").unwrap() > text.find("[ServerBox]").unwrap(),
-            "bind_ip 必须位于 [ServerBox] 节内：\n{text}"
+            "bind_ip must be inside the [ServerBox] section:\n{text}"
         );
         assert!(!text.contains("[serverbox]"), "不应出现独立的 [serverbox] 节");
     }
@@ -992,23 +992,23 @@ mod tests {
         dep.net.host_ip = Some("  192.168.100.50  ".into());
         assert!(
             !render_idas(&dep).contains("game_ip"),
-            "模拟网络开启时不应写 game_ip"
+            "game_ip should not be written while the network is simulated"
         );
         dep.net.simulate = Some(true);
         assert!(
             !render_idas(&dep).contains("game_ip"),
-            "模拟网络开启时不应写 game_ip"
+            "game_ip should not be written while the network is simulated"
         );
 
         dep.net.simulate = Some(false);
         let text = render_idas(&dep);
         assert!(
             text.contains("game_ip = 192.168.100.50"),
-            "应写出 [ServerBox] game_ip：\n{text}"
+            "[ServerBox] game_ip should be written:\n{text}"
         );
         assert!(
             text.find("game_ip = 192.168.100.50").unwrap() > text.find("[ServerBox]").unwrap(),
-            "game_ip 必须位于 [ServerBox] 节内：\n{text}"
+            "game_ip must be inside the [ServerBox] section:\n{text}"
         );
     }
 
@@ -1020,7 +1020,7 @@ mod tests {
         dep.net.serverbox_ip = Some("192.168.100.101".into());
         assert!(
             !render_config(&dep, MiceTarget::Game).contains("[ServerBox]"),
-            "Game 目标的 config.ini 不应含 [ServerBox]"
+            "the config.ini of the Game target should not contain [ServerBox]"
         );
 
         let mut dep = snapshot();
@@ -1029,7 +1029,7 @@ mod tests {
         let text = render_config(&dep, MiceTarget::ServerBox);
         assert!(
             text.contains("[ServerBox]\nbind_ip = 192.168.100.101\n"),
-            "ServerBox 的 config.ini 应写出 [ServerBox] bind_ip：\n{text}"
+            "the ServerBox config.ini should write [ServerBox] bind_ip:\n{text}"
         );
 
         let text = render_config(&snapshot(), MiceTarget::ServerBox);
@@ -1041,7 +1041,7 @@ mod tests {
             dep.net.serverbox_ip = Some("192.168.100.101".into());
             assert!(
                 !render_config(&dep, MiceTarget::ServerBox).contains("[ServerBox]"),
-                "simulate={sim:?} 时不应写 [ServerBox]"
+                "simulate={sim:?} should not write [ServerBox]"
             );
         }
     }

@@ -197,7 +197,7 @@ fn main() {
     bootstrap_runtime();
     if let Err(e) = windows_reactor::App::run_component::<reactor_app::Launcher>(()) {
 
-        eprintln!("启动器界面异常退出：{e}");
+        eprintln!("the launcher UI exited with an error: {e}");
         std::process::exit(1);
     }
 }

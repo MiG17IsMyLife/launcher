@@ -248,7 +248,7 @@ fn load_coin_from(path: &Path) -> CoinConfig {
 
 fn save_coin_to(path: &Path, cfg: &CoinConfig) -> io::Result<()> {
     if !path.exists() {
-        fs::write(path, "; Sasayaki 启动器配置\n")?;
+        fs::write(path, "; Sasayaki Launcher settings\n")?;
     }
 
     let mut w = ini::writer(path);
@@ -300,7 +300,7 @@ fn load_graphics_from(path: &Path) -> GraphicsConfig {
 
 fn save_graphics_to(path: &Path, cfg: &GraphicsConfig) -> io::Result<()> {
     if !path.exists() {
-        fs::write(path, "; Sasayaki 启动器配置\n")?;
+        fs::write(path, "; Sasayaki Launcher settings\n")?;
     }
 
     let mut w = ini::writer(path);
@@ -523,7 +523,7 @@ fn load_input_from(path: &Path) -> InputConfig {
 
 fn save_input_to(path: &Path, cfg: &InputConfig) -> io::Result<()> {
     if !path.exists() {
-        fs::write(path, "; Sasayaki 启动器配置\n")?;
+        fs::write(path, "; Sasayaki Launcher settings\n")?;
     }
 
     let mut w = ini::writer(path);
@@ -623,7 +623,7 @@ fn load_room_from(path: &Path) -> RoomConfig {
 
 fn save_room_to(path: &Path, cfg: &RoomConfig) -> io::Result<()> {
     if !path.exists() {
-        fs::write(path, "; Sasayaki 启动器配置\n")?;
+        fs::write(path, "; Sasayaki Launcher settings\n")?;
     }
     let mut w = ini::writer(path);
     w.set("room", "directory", text(cfg.directory.as_deref()));
@@ -636,7 +636,7 @@ fn save_room_to(path: &Path, cfg: &RoomConfig) -> io::Result<()> {
 
 fn save_vpn_to(path: &Path, cfg: &VpnConfig) -> io::Result<()> {
     if !path.exists() {
-        fs::write(path, "; Sasayaki 启动器配置\n")?;
+        fs::write(path, "; Sasayaki Launcher settings\n")?;
     }
     let mut w = ini::writer(path);
     w.set("vpn", "config", text(cfg.config_path.as_deref()));
@@ -660,7 +660,7 @@ fn load_network_from(path: &Path) -> NetworkConfig {
 
 fn save_network_to(path: &Path, cfg: &NetworkConfig) -> io::Result<()> {
     if !path.exists() {
-        fs::write(path, "; Sasayaki 启动器配置\n")?;
+        fs::write(path, "; Sasayaki Launcher settings\n")?;
     }
     let mut w = ini::writer(path);
     w.set("network", "adapter", cfg.adapter.as_deref().unwrap_or(""));
@@ -688,7 +688,7 @@ fn load_system_from(path: &Path) -> SystemConfig {
 
 fn save_system_to(path: &Path, cfg: &SystemConfig) -> io::Result<()> {
     if !path.exists() {
-        fs::write(path, "; Sasayaki 启动器配置\n")?;
+        fs::write(path, "; Sasayaki Launcher settings\n")?;
     }
     let mut w = ini::writer(path);
     w.set("system", "loglevel", cfg.loglevel.as_deref().unwrap_or(""));
@@ -728,7 +728,7 @@ fn load_json<T: for<'de> Deserialize<'de>>(path: &Path) -> Option<T> {
         Err(e) => {
             let bad = path.with_extension("json.bad");
             let _ = fs::rename(path, &bad);
-            eprintln!("{} 解析失败（已备份为 {}）：{e}", path.display(), bad.display());
+            eprintln!("{} failed to parse (backed up as {}): {e}", path.display(), bad.display());
             None
         }
     }
@@ -772,7 +772,7 @@ impl Store {
 
     pub fn save_library(&self, lib: &Library) {
         if let Err(e) = save_json(&self.library_path(), lib) {
-            eprintln!("保存 library.json 失败: {e}");
+            eprintln!("failed to save library.json: {e}");
         }
     }
 
@@ -782,7 +782,7 @@ impl Store {
 
     pub fn save_settings(&self, s: &Settings) {
         if let Err(e) = save_json(&self.settings_path(), s) {
-            eprintln!("保存 settings.json 失败: {e}");
+            eprintln!("failed to save settings.json: {e}");
         }
     }
 
@@ -832,7 +832,7 @@ impl Store {
     pub fn save_lang(&self, lang: Lang) -> io::Result<()> {
         let path = self.config_path();
         if !path.exists() {
-            fs::write(&path, "; Sasayaki 启动器配置\n")?;
+            fs::write(&path, "; Sasayaki Launcher settings\n")?;
         }
         ini::set_value(&path, "ui", "lang", i18n::to_ini_value(lang))
     }
@@ -1136,7 +1136,7 @@ mod tests {
     fn game_record_legacy_and_roundtrip() {
 
         let legacy = r#"{"id":"a","path":"C:/g/game.exe","name":"D8 JPN","crc":"0x1fd6136a","version":"2.01","arch":"x64","loader":"mice","image":null,"play_count":0,"last_played":null,"added_at":1700000000}"#;
-        let rec: GameRecord = serde_json::from_str(legacy).expect("旧档无新字段应可解析");
+        let rec: GameRecord = serde_json::from_str(legacy).expect("an old record without the new fields should parse");
         assert_eq!(rec.serverbox, None);
         assert_eq!(rec.reader, None);
 
@@ -1149,7 +1149,7 @@ mod tests {
         rec2.reader = Some("C:/g/picodaemon.exe".into());
         let json2 = serde_json::to_string(&rec2).unwrap();
         assert!(json2.contains("serverbox"));
-        let back: GameRecord = serde_json::from_str(&json2).expect("配置后的记录可读回");
+        let back: GameRecord = serde_json::from_str(&json2).expect("the configured record should read back");
         assert_eq!(back.serverbox.as_deref(), Some("C:/sb/server.exe"));
         assert_eq!(back.reader.as_deref(), Some("C:/g/picodaemon.exe"));
     }
@@ -1158,7 +1158,7 @@ mod tests {
     fn game_record_card_is_per_game_and_legacy_safe() {
 
         let legacy = r#"{"id":"a","path":"C:/g/game.exe","name":"D8 JPN","crc":"0x1fd6136a","version":"2.01","arch":"x64","loader":"mice","play_count":0,"last_played":null,"added_at":1700000000}"#;
-        let rec: GameRecord = serde_json::from_str(legacy).expect("旧档无 card 应可解析");
+        let rec: GameRecord = serde_json::from_str(legacy).expect("an old record without card should parse");
         assert_eq!(rec.card, None);
 
         let json = serde_json::to_string(&rec).unwrap();
@@ -1168,7 +1168,7 @@ mod tests {
         rec2.card = Some("InidCrd01234.png".into());
         let json2 = serde_json::to_string(&rec2).unwrap();
         assert!(json2.contains("\"card\":\"InidCrd01234.png\""));
-        let back: GameRecord = serde_json::from_str(&json2).expect("配置 card 的记录可读回");
+        let back: GameRecord = serde_json::from_str(&json2).expect("the record with a card should read back");
         assert_eq!(back.card.as_deref(), Some("InidCrd01234.png"));
     }
 }

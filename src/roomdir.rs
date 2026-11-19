@@ -391,7 +391,7 @@ mod tests {
                 assert!(m.contains("500"), "应带上状态码：{m}");
                 assert!(m.contains("boom"), "应带上响应正文：{m}");
             }
-            e => panic!("非 404/403/409 应归为 Other，实际 {e:?}"),
+            e => panic!("anything but 404/403/409 should be Other, got {e:?}"),
         }
     }
 

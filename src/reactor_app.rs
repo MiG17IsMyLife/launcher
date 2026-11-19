@@ -1539,7 +1539,7 @@ impl Launcher {
                                             .opacity(0.8),
                                         HyperlinkButton::new()
                                             .navigate_uri("https://dnet.arcadehub.xyz")
-                                            .expect("homepage uri 合法")
+                                            .expect("the homepage URI is valid")
                                             .content(
                                                 TextBlock::new()
                                                     .text("https://dnet.arcadehub.xyz")

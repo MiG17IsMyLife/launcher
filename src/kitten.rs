@@ -336,7 +336,7 @@ mod tests {
         GameRecord {
             id: "test".into(),
             path: game_dir.join("id5.elf").to_string_lossy().into_owned(),
-            name: "测试游戏".into(),
+            name: "Test game".into(),
             crc: Some("0x12345678".into()),
             version: Some("REV A".into()),
             arch: Some("x86".into()),
@@ -689,12 +689,12 @@ mod tests {
         let text = render(&dep);
         assert!(
             text.contains("bind_ip = 192.168.100.101"),
-            "应写出 [network] bind_ip：\n{text}"
+            "[network] bind_ip should be written:\n{text}"
         );
         assert!(
             text.contains("[network]")
                 && text.find("bind_ip = 192.168.100.101").unwrap() > text.find("[network]").unwrap(),
-            "bind_ip 必须位于 [network] 节内：\n{text}"
+            "bind_ip must be inside the [network] section:\n{text}"
         );
         assert!(!text.contains("[serverbox]"), "不应出现独立的 [serverbox] 节");
     }
@@ -709,23 +709,23 @@ mod tests {
         dep.net.host_ip = Some("  192.168.100.50  ".into());
         assert!(
             !render(&dep).contains("game_ip"),
-            "模拟网络开启时不应写 game_ip"
+            "game_ip should not be written while the network is simulated"
         );
         dep.net.simulate = Some(true);
         assert!(
             !render(&dep).contains("game_ip"),
-            "模拟网络开启时不应写 game_ip"
+            "game_ip should not be written while the network is simulated"
         );
 
         dep.net.simulate = Some(false);
         let text = render(&dep);
         assert!(
             text.contains("game_ip = 192.168.100.50"),
-            "应写出 [network] game_ip：\n{text}"
+            "[network] game_ip should be written:\n{text}"
         );
         assert!(
             text.find("game_ip = 192.168.100.50").unwrap() > text.find("[network]").unwrap(),
-            "game_ip 必须位于 [network] 节内：\n{text}"
+            "game_ip must be inside the [network] section:\n{text}"
         );
     }
 }

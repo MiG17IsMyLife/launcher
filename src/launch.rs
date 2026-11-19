@@ -870,7 +870,7 @@ mod tests {
         let err = ensure_picodaemon_from(&game, &dep).unwrap_err();
         assert!(
             err.contains("picodaemon.exe"),
-            "应提示 picodaemon.exe 缺失：{err}"
+            "the error should say picodaemon.exe is missing: {err}"
         );
         cleanup(&game);
         cleanup(&dep);
@@ -1054,7 +1054,7 @@ mod tests {
         let rec = record_with_serverbox(Some(
             sb.join("serverbox.exe").to_string_lossy().into_owned(),
         ));
-        let sb_dir = serverbox_dir_of(&rec).expect("已配置的 ServerBox 应解析出目录");
+        let sb_dir = serverbox_dir_of(&rec).expect("a configured ServerBox should resolve to a folder");
         for dir in [&game, &sb_dir] {
             deploy_gfx_patch_from(dir, true, &tools).unwrap();
             assert!(dir.join("winmm.dll").is_file(), "{} 应有 winmm.dll", dir.display());

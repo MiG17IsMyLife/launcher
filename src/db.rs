@@ -48,7 +48,7 @@ fn db() -> &'static Db {
     static DB: OnceLock<Db> = OnceLock::new();
     DB.get_or_init(|| {
         let raw: RawDb =
-            serde_json::from_str(include_str!("../games_db.json")).expect("games_db.json 解析失败");
+            serde_json::from_str(include_str!("../games_db.json")).expect("games_db.json failed to parse");
         raw.into_db()
     })
 }
@@ -102,7 +102,7 @@ impl RawDb {
             let loader_str = p.loader.as_deref().unwrap_or("");
             let loader = match parse_loader(loader_str) {
                 Some(l) => l,
-                None => panic!("games_db.json：产品「{name}」loader「{loader_str}」无效"),
+                None => panic!("games_db.json: product \"{name}\" has an invalid loader \"{loader_str}\""),
             };
             let builds = p
                 .support_game
@@ -127,7 +127,7 @@ impl RawDb {
             }
         };
 
-        let games = self.games.iter().map(|p| parse(p, "未命名游戏")).collect();
+        let games = self.games.iter().map(|p| parse(p, "Unnamed game")).collect();
         let card_reader = self.card_reader.as_ref().map(|p| parse(p, "card_reader"));
         Db { games, card_reader }
     }
@@ -261,7 +261,7 @@ mod tests {
     #[test]
     fn lookup_mice_d8_returns_product_and_build() {
 
-        let m = lookup(0x1FD6_136A, Loader::Mice).expect("D8 JPN 2.01 应命中");
+        let m = lookup(0x1FD6_136A, Loader::Mice).expect("D8 JPN 2.01 should match");
         assert_eq!(m.name, "InitialD Arcade Stage 8 JPN");
         assert_eq!(m.version, "2.01");
         assert_eq!(m.loader, Loader::Mice);
@@ -274,7 +274,7 @@ mod tests {
     #[test]
     fn lookup_kitten_d4_returns_product_and_build() {
 
-        let m = lookup(0x361D_1CBE, Loader::Kitten).expect("D4 REV A 应命中");
+        let m = lookup(0x361D_1CBE, Loader::Kitten).expect("D4 REV A should match");
         assert_eq!(m.name, "InitialD Arcade Stage 4 JPN");
         assert_eq!(m.version, "REV A");
         assert_eq!(m.loader, Loader::Kitten);
@@ -286,7 +286,7 @@ mod tests {
     #[test]
     fn lookup_empty_sb_crc_yields_none() {
 
-        let m = lookup(0xD491_0E75, Loader::Kitten).expect("D5 EXP2.0 应命中");
+        let m = lookup(0xD491_0E75, Loader::Kitten).expect("D5 EXP2.0 should match");
         assert_eq!(m.name, "InitialD Arcade Stage 5 EXP 2.0");
         assert_eq!(m.version, "REV A");
         assert_eq!(m.sb_crc, None);
@@ -313,7 +313,7 @@ mod tests {
 
         assert!(
             build_count() >= 16,
-            "games_db 构建数异常：{}",
+            "unexpected number of builds in games_db: {}",
             build_count()
         );
     }
@@ -341,13 +341,13 @@ mod tests {
     #[test]
     fn lookup_by_game_id_hits_d8_build() {
 
-        let m = lookup_by_game_id("SBZZ", "2.01").expect("SBZZ 2.01 应命中");
+        let m = lookup_by_game_id("SBZZ", "2.01").expect("SBZZ 2.01 should match");
         assert_eq!(m.name, "InitialD Arcade Stage 8 JPN");
         assert_eq!(m.version, "2.01");
         assert_eq!(m.sb_crc, Some(0x8667_432A));
         assert_eq!(m.loader, Loader::Mice);
 
-        let m2 = lookup_by_game_id("SBZZ", "2.01.0").expect("xx.xx 与 xx.xx.xx 应等价命中");
+        let m2 = lookup_by_game_id("SBZZ", "2.01.0").expect("xx.xx and xx.xx.xx should match alike");
         assert_eq!(m2.version, "2.01");
 
         assert_eq!(lookup_by_game_id("SBZZ", "1.0").unwrap().version, "1.0");
@@ -369,12 +369,12 @@ mod tests {
                  "platform":"ALLS","loader":"segatools",
                  "support_game":[{"version":"3.21.00"},{"crc":"0x00000000","version":"3.00.00"}]}]}"#,
         )
-        .expect("无 crc 的条目应可解析");
+        .expect("an entry without crc should parse");
         let parsed = raw.into_db();
         let g = &parsed.games[0];
         assert_eq!(g.loader, Loader::Segatools);
-        assert_eq!(g.builds[0].crc, None, "缺失 crc 容错为 None");
+        assert_eq!(g.builds[0].crc, None, "a missing crc is read as None");
         assert_eq!(g.builds[0].version, "3.21.00");
-        assert_eq!(g.builds[1].crc, Some(0), "显式 0x00000000 仍有效");
+        assert_eq!(g.builds[1].crc, Some(0), "an explicit 0x00000000 is still valid");
     }
 }

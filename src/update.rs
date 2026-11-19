@@ -293,7 +293,7 @@ pub fn save_cache(index: &UpdateIndex) {
     let path = storage::data_dir().join("update_cache.json");
     if let Some(dir) = path.parent() {
         if let Err(e) = std::fs::create_dir_all(dir) {
-            eprintln!("创建更新缓存目录失败：{e}");
+            eprintln!("failed to create the update cache folder: {e}");
         }
     }
     let mut merged = load_cache().unwrap_or_default();
@@ -311,7 +311,7 @@ pub fn save_cache(index: &UpdateIndex) {
     };
     if let Ok(s) = serde_json::to_string_pretty(&c) {
         if let Err(e) = std::fs::write(&path, s) {
-            eprintln!("写入更新缓存失败：{e}");
+            eprintln!("failed to write the update cache: {e}");
         }
     }
 }

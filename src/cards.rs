@@ -284,10 +284,10 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("dnet_aime_{}", std::process::id()));
         fs::remove_dir_all(&dir).ok();
 
-        let a = create_aime_card_in(&dir).expect("新建卡 a 应成功");
+        let a = create_aime_card_in(&dir).expect("creating card a should succeed");
         std::thread::sleep(std::time::Duration::from_millis(30));
-        let b = create_aime_card_in(&dir).expect("新建卡 b 应成功");
-        assert_ne!(a, b, "重号应自动重试");
+        let b = create_aime_card_in(&dir).expect("creating card b should succeed");
+        assert_ne!(a, b, "a duplicate number should be retried automatically");
         for code in [&a, &b] {
             assert_eq!(code.len(), 20);
             assert!(code.chars().all(|c| c.is_ascii_digit()));
@@ -296,7 +296,7 @@ mod tests {
 
         let scan = scan_aime_cards_in(&dir);
         assert_eq!(scan.cards.len(), 2);
-        assert_eq!(scan.cards[0].name, b, "新建卡显示在最前面");
+        assert_eq!(scan.cards[0].name, b, "the new card comes first");
         assert_eq!(scan.cards[1].name, a);
 
         assert_eq!(
@@ -320,7 +320,7 @@ mod tests {
         fs::write(dir.join("short.txt"), "12345").unwrap();
 
         let scan = scan_aime_cards_in(&dir);
-        assert_eq!(scan.cards.len(), 2, "非 20 位数字的 txt 应被跳过");
+        assert_eq!(scan.cards.len(), 2, "a txt that is not 20 digits should be skipped");
         assert_eq!(scan.cards[1].name, code);
         assert!(dir.join(format!("{code}.txt")).is_file(), "应改名为 <code>.txt");
         assert!(!dir.join("random_name.txt").exists(), "旧文件名应已不存在");

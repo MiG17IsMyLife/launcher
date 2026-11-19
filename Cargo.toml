@@ -47,7 +47,8 @@ features = [
 ]
 
 [features]
-# IDAC 接入预留接口（死代码桩）的开关；关闭时不编译相关预留代码，避免二进制膨胀。
+# Switch for the interfaces reserved for IDAC integration (dead-code stubs); when off, the
+# reserved code is not compiled, so the binary does not grow.
 idac = []
 
 [build-dependencies]

@@ -765,30 +765,30 @@ mod tests {
 
     #[test]
     fn builtin_card_base_matches_constants() {
-        let img = image::load_from_memory(CARD_BASE_PNG).expect("内置底图应能解码");
-        assert_eq!(img.width(), CARD_BASE_W as u32, "底图宽度与常量不符");
-        assert_eq!(img.height(), CARD_BASE_H as u32, "底图高度与常量不符");
+        let img = image::load_from_memory(CARD_BASE_PNG).expect("the built-in base image should decode");
+        assert_eq!(img.width(), CARD_BASE_W as u32, "the base image width does not match the constant");
+        assert_eq!(img.height(), CARD_BASE_H as u32, "the base image height does not match the constant");
     }
 
     #[test]
     fn id8_card_base_matches_constants() {
-        let img = image::load_from_memory(ID8_BASE_PNG).expect("ID8 底图应能解码");
-        assert_eq!(img.width(), ID8_BASE_W as u32, "ID8 底图宽度与常量不符");
-        assert_eq!(img.height(), ID8_BASE_H as u32, "ID8 底图高度与常量不符");
+        let img = image::load_from_memory(ID8_BASE_PNG).expect("the ID8 base image should decode");
+        assert_eq!(img.width(), ID8_BASE_W as u32, "the ID8 base image width does not match the constant");
+        assert_eq!(img.height(), ID8_BASE_H as u32, "the ID8 base image height does not match the constant");
     }
 
     #[test]
     fn id4_card_base_matches_constants() {
-        let img = image::load_from_memory(ID4_BASE_PNG).expect("ID4 底图应能解码");
-        assert_eq!(img.width(), ID4_BASE_W as u32, "ID4 底图宽度与常量不符");
-        assert_eq!(img.height(), ID4_BASE_H as u32, "ID4 底图高度与常量不符");
+        let img = image::load_from_memory(ID4_BASE_PNG).expect("the ID4 base image should decode");
+        assert_eq!(img.width(), ID4_BASE_W as u32, "the ID4 base image width does not match the constant");
+        assert_eq!(img.height(), ID4_BASE_H as u32, "the ID4 base image height does not match the constant");
     }
 
     #[test]
     fn id6_card_base_matches_constants() {
-        let img = image::load_from_memory(ID6_BASE_PNG).expect("ID6 底图应能解码");
-        assert_eq!(img.width(), ID6_BASE_W as u32, "ID6 底图宽度与常量不符");
-        assert_eq!(img.height(), ID6_BASE_H as u32, "ID6 底图高度与常量不符");
+        let img = image::load_from_memory(ID6_BASE_PNG).expect("the ID6 base image should decode");
+        assert_eq!(img.width(), ID6_BASE_W as u32, "the ID6 base image width does not match the constant");
+        assert_eq!(img.height(), ID6_BASE_H as u32, "the ID6 base image height does not match the constant");
     }
 
     #[test]
@@ -796,7 +796,7 @@ mod tests {
         for name in crate::db::cover_images() {
             assert!(
                 Launcher::builtin_cover_bytes(&name).is_some(),
-                "games_db.json 引用了封面 {name}，但 COVER_ASSETS 未登记该图片"
+                "games_db.json refers to the cover {name}, but COVER_ASSETS does not list that image"
             );
         }
     }

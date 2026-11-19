@@ -45,7 +45,7 @@ fn decrypt_icf(cipher: &[u8]) -> Result<Vec<u8>, String> {
     for (idx, chunk) in plain.chunks_mut(CHUNK).enumerate() {
 
         let mut dec = Decryptor::<Aes128>::new_from_slices(&MASTER_KEY, &MASTER_IV)
-            .expect("密钥/IV 为固定 16 字节");
+            .expect("the key and IV are fixed 16-byte values");
         for block in chunk.chunks_exact_mut(16) {
             dec.decrypt_block_mut(GenericArray::from_mut_slice(block));
         }
@@ -139,11 +139,11 @@ fn rd_u16(d: &[u8], off: usize) -> u16 {
 }
 
 fn rd_u32(d: &[u8], off: usize) -> u32 {
-    u32::from_le_bytes(d[off..off + 4].try_into().expect("读取范围固定 4 字节"))
+    u32::from_le_bytes(d[off..off + 4].try_into().expect("the range read is a fixed 4 bytes"))
 }
 
 fn rd_u64(d: &[u8], off: usize) -> u64 {
-    u64::from_le_bytes(d[off..off + 8].try_into().expect("读取范围固定 8 字节"))
+    u64::from_le_bytes(d[off..off + 8].try_into().expect("the range read is a fixed 8 bytes"))
 }
 
 #[cfg(test)]
@@ -195,7 +195,7 @@ mod tests {
                 *b ^= (location >> ((i % 8) * 8)) as u8;
             }
             let mut enc = Encryptor::<Aes128>::new_from_slices(&MASTER_KEY, &MASTER_IV)
-                .expect("密钥/IV 为固定 16 字节");
+                .expect("the key and IV are fixed 16-byte values");
             for block in chunk.chunks_exact_mut(16) {
                 enc.encrypt_block_mut(GenericArray::from_mut_slice(block));
             }
@@ -209,7 +209,7 @@ mod tests {
 
     fn write_temp_icf(name: &str, bytes: &[u8]) -> std::path::PathBuf {
         let p = temp_icf_path(name);
-        std::fs::write(&p, bytes).expect("写临时 ICF 失败");
+        std::fs::write(&p, bytes).expect("failed to write the temporary ICF");
         p
     }
 
@@ -224,7 +224,7 @@ mod tests {
             (true, APP, (3, 21, 0)),
         ]);
         let p = write_temp_icf("roundtrip", &encrypt_icf_bytes(&plain));
-        let info = parse_icf(&p).expect("合成 ICF 应解析成功");
+        let info = parse_icf(&p).expect("the synthetic ICF should parse");
         assert_eq!(info.id, "SDGT");
         assert_eq!(info.version, "3.21.00");
         std::fs::remove_file(&p).ok();
@@ -236,14 +236,14 @@ mod tests {
             (false, APP, (3, 21, 0)),
             (true, APP, (2, 0, 1)),
         ]);
-        let info = parse_icf_bytes(&plain).expect("应命中第二个启用 APP 条目");
+        let info = parse_icf_bytes(&plain).expect("the second enabled APP entry should be found");
         assert_eq!(info.version, "2.00.01");
     }
 
     #[test]
     fn version_pads_minor_and_build() {
         let plain = build_plain_icf(&[(true, APP, (12, 3, 7))]);
-        let info = parse_icf_bytes(&plain).expect("应解析成功");
+        let info = parse_icf_bytes(&plain).expect("should parse");
         assert_eq!(info.version, "12.03.07");
         let plain = build_plain_icf(&[(true, APP, (3, 21, 5))]);
         assert_eq!(parse_icf_bytes(&plain).unwrap().version, "3.21.05");
@@ -257,7 +257,7 @@ mod tests {
         let plain = build_plain_icf(&entries);
         assert_eq!(plain.len(), 0x1040);
         let p = write_temp_icf("multichunk", &encrypt_icf_bytes(&plain));
-        let info = parse_icf(&p).expect("跨块 ICF 应解析成功");
+        let info = parse_icf(&p).expect("an ICF spanning blocks should parse");
         assert_eq!(info.version, "3.21.00");
         std::fs::remove_file(&p).ok();
     }
@@ -268,7 +268,7 @@ mod tests {
         let mut cipher = encrypt_icf_bytes(&plain);
         cipher[10] ^= 0xFF;
         let p = write_temp_icf("tampered", &cipher);
-        let err = parse_icf(&p).expect_err("篡改密文应失败");
+        let err = parse_icf(&p).expect_err("a tampered ciphertext should fail");
         assert!(err.contains("主 CRC32"), "实际错误：{err}");
         std::fs::remove_file(&p).ok();
     }
@@ -283,20 +283,20 @@ mod tests {
         plain[4..8].copy_from_slice(&total.to_le_bytes());
         let crc = crc32fast::hash(&plain[4..]);
         plain[0..4].copy_from_slice(&crc.to_le_bytes());
-        let err = parse_icf_bytes(&plain).expect_err("截断应失败");
+        let err = parse_icf_bytes(&plain).expect_err("a truncated file should fail");
         assert!(err.contains("条目数"), "实际错误：{err}");
     }
 
     #[test]
     fn too_short_data_fails() {
-        let err = parse_icf_bytes(&[0u8; 0x20]).expect_err("过短应失败");
+        let err = parse_icf_bytes(&[0u8; 0x20]).expect_err("a file that is too short should fail");
         assert!(err.contains("小于头部大小"), "实际错误：{err}");
     }
 
     #[test]
     fn non_block_sized_file_fails() {
         let p = write_temp_icf("garbage", &[0xABu8; 100]);
-        let err = parse_icf(&p).expect_err("非 16 倍数长度应失败");
+        let err = parse_icf(&p).expect_err("a length that is not a multiple of 16 should fail");
         assert!(err.contains("AES 块大小"), "实际错误：{err}");
         std::fs::remove_file(&p).ok();
     }
@@ -304,7 +304,7 @@ mod tests {
     #[test]
     fn no_enabled_app_entry_fails() {
         let plain = build_plain_icf(&[(true, SYSTEM, (2, 0, 0))]);
-        let err = parse_icf_bytes(&plain).expect_err("无 APP 条目应失败");
+        let err = parse_icf_bytes(&plain).expect_err("a file without APP entries should fail");
         assert!(err.contains("APP 条目"), "实际错误：{err}");
     }
 

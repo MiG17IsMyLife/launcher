@@ -286,7 +286,7 @@ mod tests {
         for machine in [MACHINE_I386, MACHINE_AMD64] {
             let buf = build_pe(&text, machine);
             let mut f = tempfile("pe_text", &buf);
-            let crc = pe_text_crc(&mut f).expect("PE 解析成功");
+            let crc = pe_text_crc(&mut f).expect("PE should parse");
             assert_eq!(crc, expected, "machine=0x{machine:04X}");
         }
     }
@@ -336,7 +336,7 @@ mod tests {
         expected.update(&seg[0xA..0xA + 0x4000]);
         let expected = expected.finalize();
 
-        assert_eq!(elf_crc(&mut f).expect("ELF 解析成功"), expected);
+        assert_eq!(elf_crc(&mut f).expect("ELF should parse"), expected);
     }
 
     #[test]
@@ -370,7 +370,7 @@ mod tests {
         buf[seg2_file..seg2_file + 0x100].copy_from_slice(&seg2);
 
         let mut f = tempfile("elf_gap", &buf);
-        let crc = elf_crc(&mut f).expect("ELF 解析成功");
+        let crc = elf_crc(&mut f).expect("ELF should parse");
 
         let mut stream = Vec::new();
         stream.extend_from_slice(&seg1);
@@ -419,8 +419,8 @@ mod tests {
             .create(true)
             .truncate(true)
             .open(&path)
-            .expect("创建临时文件");
-        f.write_all(bytes).expect("写入临时文件");
+            .expect("create temporary file");
+        f.write_all(bytes).expect("write temporary file");
         f
     }
 }
@@ -434,10 +434,10 @@ mod real_world_smoke {
 
         let p = Path::new(r"E:\vsproject\kittentools\win-release\kitten.exe");
         if !p.is_file() {
-            eprintln!("跳过：找不到 kitten.exe");
+            eprintln!("skipped: kitten.exe not found");
             return;
         }
-        let r = identify(p).expect("识别 kitten.exe 成功");
+        let r = identify(p).expect("kitten.exe should be identified");
         assert!(matches!(r.kind, FileKind::Pe { .. }));
         assert_ne!(r.crc, 0);
         assert!(r.db.is_none(), "kitten.exe 本身不应命中游戏库");

@@ -739,13 +739,13 @@ mod tests {
         let text = render_segatools_ini(&dep, None);
         assert!(
             text.contains("[keychip]\ngameId = SDGT"),
-            "game_id 落 [keychip]，其余键未设时整节只有 gameId：\n{text}"
+            "game_id goes to [keychip]; with no other key set the section holds only gameId:\n{text}"
         );
 
         dep.system.keychip = Some("A69E-01A88888888".into());
         dep.net.ip = Some("192.168.100.0/24".into());
         let text = render_segatools_ini(&dep, None);
-        let keychip = text.split("[keychip]").nth(1).expect("应存在 [keychip] 节");
+        let keychip = text.split("[keychip]").nth(1).expect("the [keychip] section should exist");
         assert!(keychip.contains("gameId = SDGT"), "gameId 与序列号同节：\n{text}");
         assert!(keychip.contains("id = A69E-01A88888888"));
         assert!(keychip.contains("subnet = 192.168.100.0"));
@@ -770,7 +770,7 @@ mod tests {
         let text = render_segatools_ini(&dep, None);
         assert!(
             text.contains("subnet = 172.10.1.0"),
-            "房间模式下 subnet 应写房间网段基址：\n{text}"
+            "in room mode subnet should be the room subnet base:\n{text}"
         );
         assert!(!text.contains("192.168.100.0"), "不应再写原网段：\n{text}");
 
@@ -923,7 +923,7 @@ mod tests {
         assert!(text.contains("[io3]"), "IDZ 输入段为 io3");
         assert!(
             text.contains("[gfx]\nenable = 1"),
-            "IDZ 图形钩子恒启用：\n{text}"
+            "the IDZ graphics hook is always enabled:\n{text}"
         );
         assert!(text.contains("windowed = 1"), "IDZ 恒窗口化：\n{text}");
         assert!(!text.contains("[indrun]"), "IDZ 无 indrun");
@@ -939,7 +939,7 @@ mod tests {
         let text = render_segatools_ini(&dep, None);
         assert!(
             text.contains("[gfx]\nenable = 1\nwindowed = 1"),
-            "默认设置未关闭：仅写 enable / windowed：\n{text}"
+            "defaults not turned off: only enable / windowed are written:\n{text}"
         );
         assert!(!text.contains("width") && !text.contains("height"));
 
@@ -948,11 +948,11 @@ mod tests {
         let text = render_segatools_ini(&dep, None);
         assert!(
             text.contains("[gfx]\nenable = 1\nwidth = 1920\nheight = 1080"),
-            "关闭默认设置 + 选分辨率：\n{text}"
+            "defaults turned off + a resolution chosen:\n{text}"
         );
         assert!(
             text.contains("\nframed = 1\nwindowed = 1"),
-            "无边框未开启应写 framed=1 且 windowed=1：\n{text}"
+            "without borderless, framed=1 and windowed=1 should be written:\n{text}"
         );
 
         let mut dep = snapshot();
@@ -961,7 +961,7 @@ mod tests {
         let text = render_segatools_ini(&dep, None);
         assert!(
             text.contains("[gfx]\nenable = 1\nwidth = 1920\nheight = 1080"),
-            "未选分辨率应写默认宽高：\n{text}"
+            "without a resolution, the default width and height should be written:\n{text}"
         );
 
         dep.graphics.borderless = Some(true);
@@ -974,7 +974,7 @@ mod tests {
         let text = render_segatools_ini(&dep, None);
         assert!(
             text.contains("[gfx]\nenable = 1\nwidth = 1920\nheight = 1080\nframed = 0\nwindowed = 1"),
-            "无边框开启应写 framed=0（windowed 恒 1）：\n{text}"
+            "with borderless, framed=0 should be written (windowed is always 1):\n{text}"
         );
         for key in ["fullscreen", "render_scale", "msaa", "af_level"] {
             assert!(!text.contains(key), "{key} 不应写入 segatools.ini：\n{text}");
@@ -984,7 +984,7 @@ mod tests {
         let text = render_segatools_ini(&dep, None);
         assert!(
             text.contains("\nframed = 1\nwindowed = 1"),
-            "无边框关闭应写 framed=1 且 windowed=1：\n{text}"
+            "with borderless off, framed=1 and windowed=1 should be written:\n{text}"
         );
 
         let mut dep = snapshot();
@@ -1001,7 +1001,7 @@ mod tests {
         let text = render_segatools_ini(&dep, None);
         assert!(
             text.contains("[gfx]\nenable = 1\nwidth = 1920\nheight = 1080"),
-            "分辨率异常应回退默认宽高：\n{text}"
+            "an invalid resolution should fall back to the default width and height:\n{text}"
         );
     }
 
@@ -1114,7 +1114,7 @@ mod tests {
         assert!(text.contains("xiScan = Y"), "刷卡键写 [aime] xiScan：\n{text}");
         assert!(
             text.contains("xiDeviceIndex = 2"),
-            "xiScan 所用手柄槽位：\n{text}"
+            "the controller slot used by xiScan:\n{text}"
         );
         assert!(!text.contains("card = "), "[xinput] 无 card 键（mice 才有）：\n{text}");
     }
@@ -1159,18 +1159,18 @@ mod tests {
 
         let mut dep = snapshot();
         dep.game_id = Some("SDDF".into());
-        deploy(&dir, tool, &dep).expect("IDZ 部署应成功");
+        deploy(&dir, tool, &dep).expect("the IDZ deployment should succeed");
 
         assert!(dir.join("inject.exe").is_file(), "工具顶层 inject.exe 应拷贝");
         assert!(
             dir.join("idzhook.dll").is_file(),
-            "idz\\idzhook.dll 应拷贝到 amdaemon 目录"
+            "idz\\idzhook.dll should be copied to the amdaemon folder"
         );
         assert!(dir.join("segatools.ini").is_file());
         assert!(dir.join("option").is_dir() && dir.join("appdata").is_dir());
         assert!(
             !dir.join("config_hook.json").exists(),
-            "IDZ 不需要 config_hook.json"
+            "IDZ does not need config_hook.json"
         );
 
         let ini = fs::read_to_string(dir.join("segatools.ini")).unwrap();
@@ -1197,7 +1197,7 @@ mod tests {
         let mut dep = snapshot();
         dep.input.kind = Some("dinput".into());
         let text = render_segatools_ini(&dep, None);
-        let dinput = text.split("[dinput]").nth(1).expect("应存在 [dinput] 段");
+        let dinput = text.split("[dinput]").nth(1).expect("the [dinput] section should exist");
         for key in [
             "constantForceStrength",
             "damperStrength",
@@ -1208,7 +1208,7 @@ mod tests {
         ] {
             assert!(dinput.contains(key), "{key} 应位于 [dinput] 段");
         }
-        let ffb = text.split("[ffb]").nth(1).expect("应存在 [ffb] 段");
+        let ffb = text.split("[ffb]").nth(1).expect("the [ffb] section should exist");
         assert!(ffb.contains("enable = 1"));
         assert!(!ffb.contains("Strength"), "[ffb] 不含强度键");
 
@@ -1224,7 +1224,7 @@ mod tests {
         assert_eq!(seat_dipsw(Some("A2")), (0, 1, 0));
         assert_eq!(seat_dipsw(Some("B1")), (0, 0, 1));
         assert_eq!(seat_dipsw(Some("B2")), (0, 1, 1));
-        assert_eq!(seat_dipsw(Some("???")), (1, 0, 0), "未知值回退单机");
+        assert_eq!(seat_dipsw(Some("???")), (1, 0, 0), "an unknown value falls back to single");
     }
 
     #[test]
@@ -1253,7 +1253,7 @@ mod tests {
         let text = render_segatools_ini(&dep, None);
         assert!(text.contains("[system]"), "enable/freeplay 仍在");
         assert!(text.contains("[gpio]
-dipsw1"), "SDDF 主机在 [gpio] dipsw1");
+dipsw1"), "the SDDF host is in [gpio] dipsw1");
         assert!(!text.contains("dipsw2"), "dipsw2 仅 SDGT");
         assert!(!text.contains("dipsw3"), "dipsw3 仅 SDGT");
         assert!(!text.contains("dipsw4"), "dipsw4 仅 SDGT");
@@ -1278,7 +1278,7 @@ dipsw1"), "SDDF 主机在 [gpio] dipsw1");
             assert!(sn.starts_with("ACAE01A"), "{sn}");
             assert!(
                 sn[8..].bytes().all(|b| b.is_ascii_digit()),
-                "尾 8 位应为数字：{sn}"
+                "the last 8 characters should be digits: {sn}"
             );
         }
     }
@@ -1292,7 +1292,7 @@ dipsw1"), "SDDF 主机在 [gpio] dipsw1");
             assert!(sn.starts_with("AAVE-01A"), "{sn}");
             assert!(
                 sn[8..].bytes().all(|b| b.is_ascii_digit()),
-                "尾 8 位应为数字：{sn}"
+                "the last 8 characters should be digits: {sn}"
             );
         }
     }
@@ -1311,11 +1311,11 @@ dipsw1"), "SDDF 主机在 [gpio] dipsw1");
             );
             assert!(
                 text.contains("[pcbid]\nserialNo = ACAE01A12345678"),
-                "{gid} 应写 [pcbid] serialNo：\n{text}"
+                "{gid} should write [pcbid] serialNo:\n{text}"
             );
             assert!(
                 text.contains("[ds]\nserialNO = AAVE-01A12345678"),
-                "{gid} 应写 [ds] serialNO：\n{text}"
+                "{gid} should write [ds] serialNO:\n{text}"
             );
         }
     }
