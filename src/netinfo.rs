@@ -331,10 +331,10 @@ mod tests {
     fn list_adapters_smoke() {
         let adapters = list_adapters();
         for a in &adapters {
-            assert!(!a.guid.is_empty(), "网卡 GUID 不应为空");
-            assert!(!a.friendly.is_empty(), "网卡 FriendlyName 不应为空");
+            assert!(!a.guid.is_empty(), "the adapter GUID should not be empty");
+            assert!(!a.friendly.is_empty(), "the adapter FriendlyName should not be empty");
             for ip in &a.ips {
-                assert!(parse_ipv4(&ip.ip).is_some(), "非法 IPv4: {}", ip.ip);
+                assert!(parse_ipv4(&ip.ip).is_some(), "invalid IPv4: {}", ip.ip);
                 assert!(ip.prefix <= 32);
                 assert!(network_cidr(ip).contains('/'));
             }

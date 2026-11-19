@@ -388,8 +388,8 @@ mod tests {
 
         match DirError::from_status(500, "boom") {
             DirError::Other(m) => {
-                assert!(m.contains("500"), "应带上状态码：{m}");
-                assert!(m.contains("boom"), "应带上响应正文：{m}");
+                assert!(m.contains("500"), "the status code should be included: {m}");
+                assert!(m.contains("boom"), "the response body should be included: {m}");
             }
             e => panic!("anything but 404/403/409 should be Other, got {e:?}"),
         }
@@ -404,7 +404,7 @@ mod tests {
             DirError::Transport("x".to_string()),
             DirError::Other("oops".to_string()),
         ] {
-            assert!(!e.message().trim().is_empty(), "{e:?} 应有提示文案");
+            assert!(!e.message().trim().is_empty(), "{e:?} should have a message");
         }
     }
 

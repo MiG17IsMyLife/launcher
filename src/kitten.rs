@@ -388,7 +388,7 @@ mod tests {
         let mut dep = snapshot();
         dep.system.loglevel = Some("off".into());
         let text = render(&dep);
-        assert!(!text.contains("log_level"), "历史遗留 off 不应写 log_level");
+        assert!(!text.contains("log_level"), "the legacy value off should not write log_level");
         assert!(text.contains("[network]"));
     }
 
@@ -431,7 +431,7 @@ mod tests {
         assert!(text.contains("simulateNetwork = false"));
         assert!(text.contains("log_level = 1"));
         assert!(text.contains("region = 2"));
-        assert!(text.contains("dipsw = 0x3A"), "CHN 应派生写 dipsw=0x3A");
+        assert!(text.contains("dipsw = 0x3A"), "CHN should also write dipsw=0x3A");
         assert!(text.contains("game_id = SBTS"));
         assert!(text.contains("keychip_serial = A69E-01A99999999"));
         assert!(text.contains("skipInitCard = true"));
@@ -444,10 +444,10 @@ mod tests {
         assert!(text.contains("mode = 2"));
         assert!(text.contains("restrict_ = 128"));
 
-        assert!(text.contains("[dinput]"), "dinput 模式应写 [dinput] 段");
+        assert!(text.contains("[dinput]"), "dinput mode should write the [dinput] section");
         assert!(text.contains("reverseAccelAxis = false"));
         assert!(text.contains("reverseBrakeAxis = false"));
-        assert!(!text.contains(';'), "生成文件不得含注释");
+        assert!(!text.contains(';'), "the generated file must not contain comments");
     }
 
     #[test]
@@ -476,7 +476,7 @@ mod tests {
         dep.input.kind = Some("dinput".into());
 
         let text = render(&dep);
-        assert!(text.contains("[ffb]"), "应写 [ffb] 力反馈段");
+        assert!(text.contains("[ffb]"), "the [ffb] force feedback section should be written");
         assert!(text.contains("enable = true"));
         assert!(text.contains("constantForceStrength = 100"));
         assert!(text.contains("damperStrength = 100"));
@@ -510,7 +510,7 @@ mod tests {
         let text = render(&dep);
         assert!(text.contains("region = 0"));
         assert!(text.contains("log_level = 3"));
-        assert!(!text.contains("dipsw"), "非 CHN 不写 dipsw");
+        assert!(!text.contains("dipsw"), "only CHN writes dipsw");
     }
 
     #[test]
@@ -533,7 +533,7 @@ mod tests {
         let text = render(&dep);
         assert!(text.contains("mode = 1"));
 
-        assert!(text.contains("restrict_ = 128"), "未设置比率应写默认 128");
+        assert!(text.contains("restrict_ = 128"), "without a ratio the default 128 should be written");
     }
 
     #[test]
@@ -559,11 +559,11 @@ mod tests {
         let text2 = render(&dep2);
         assert!(text2.contains("start = A"));
         assert!(text2.contains("coin = Y"));
-        assert!(text2.contains("accel = RT"), "油门源应写捕获的按钮名");
-        assert!(text2.contains("brake = LT"), "刹车源应写捕获的按钮名");
-        assert!(!text2.contains("viewChg ="), "未设置不写");
-        assert!(!text2.contains("up ="), "空白值不写出");
-        assert!(!text2.contains("card ="), "kitten [xinput] 无 card 键");
+        assert!(text2.contains("accel = RT"), "the throttle should be the captured button name");
+        assert!(text2.contains("brake = LT"), "the brake should be the captured button name");
+        assert!(!text2.contains("viewChg ="), "an unset key is not written");
+        assert!(!text2.contains("up ="), "a blank value is not written");
+        assert!(!text2.contains("card ="), "kitten [xinput] has no card key");
         assert!(!text2.contains("shiftDn ="));
         assert!(!text2.contains("down ="));
     }
@@ -589,8 +589,8 @@ mod tests {
         dep2.input.up_button = Some(DPAD_CODE_BASE + 1);
         dep2.input.left_button = Some(DPAD_CODE_BASE + 4);
         let text2 = render(&dep2);
-        assert!(!text2.contains("up = "), "十字键伪码不应写入 dinput");
-        assert!(!text2.contains("left = "), "十字键伪码不应写入 dinput");
+        assert!(!text2.contains("up = "), "D-pad pseudo codes should not be written to dinput");
+        assert!(!text2.contains("left = "), "D-pad pseudo codes should not be written to dinput");
     }
 
     #[test]
@@ -627,9 +627,9 @@ mod tests {
 
         assert_eq!(fs::read(game.join("kitten.exe")).unwrap(), b"kitten-bin");
         assert_eq!(fs::read(game.join("mice.dll")).unwrap(), b"dll-bin");
-        assert!(!game.join("config.ini").exists(), "不应复制工具自带 config.ini");
-        assert!(!game.join("kitten.log").exists(), "不应复制 *.log");
-        assert!(!game.join("sram.bin").exists(), "不应复制 sram.bin");
+        assert!(!game.join("config.ini").exists(), "the tool's own config.ini should not be copied");
+        assert!(!game.join("kitten.log").exists(), "*.log should not be copied");
+        assert!(!game.join("sram.bin").exists(), "sram.bin should not be copied");
 
         let cfg = fs::read_to_string(game.join("kitten/config.ini")).unwrap();
         assert_eq!(cfg, render(&dep));
@@ -667,7 +667,7 @@ mod tests {
         snapshot.net.server = Some(" my.server.net ".into());
         let text = render(&snapshot);
         assert!(text.contains("redirect = my.server.net"));
-        assert!(!text.contains("sdgt.arcadehub.xyz"), "自定义服务器时不再写默认域名");
+        assert!(!text.contains("sdgt.arcadehub.xyz"), "with a custom server the default domain is not written");
     }
 
     #[test]
@@ -696,7 +696,7 @@ mod tests {
                 && text.find("bind_ip = 192.168.100.101").unwrap() > text.find("[network]").unwrap(),
             "bind_ip must be inside the [network] section:\n{text}"
         );
-        assert!(!text.contains("[serverbox]"), "不应出现独立的 [serverbox] 节");
+        assert!(!text.contains("[serverbox]"), "there should be no separate [serverbox] section");
     }
 
     #[test]

@@ -311,7 +311,7 @@ mod tests {
         assert!(s.contains(
             "ADV_NEWS_SERVER_URL_0 = http://192.168.100.114:8086/idas6/news/news50.txt"
         ));
-        assert!(!s.contains(H), "不应残留默认私服地址");
+        assert!(!s.contains(H), "the default private server address should not remain");
     }
 
     #[test]

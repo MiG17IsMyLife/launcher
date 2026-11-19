@@ -494,7 +494,7 @@ mod tests {
     #[test]
     fn render_config_ffb_default_and_custom() {
         let text = render_config(&snapshot(), MiceTarget::Game);
-        assert!(text.contains("[ffb]"), "config.ini 应写 [ffb] 力反馈段");
+        assert!(text.contains("[ffb]"), "config.ini should write the [ffb] force feedback section");
         assert!(text.contains("enable = true"));
         assert!(text.contains("constantForceStrength = 100"));
         assert!(text.contains("damperStrength = 100"));
@@ -689,7 +689,7 @@ mod tests {
             let text = render_idas(&dep);
             match want {
                 Some(n) => assert!(text.contains(&format!("render_scale = {n}"))),
-                None => assert!(!text.contains("render_scale"), "{raw} 不应写出"),
+                None => assert!(!text.contains("render_scale"), "{raw} should not be written"),
             }
         }
 
@@ -714,7 +714,7 @@ mod tests {
 
         assert!(text.contains("leftStickDeadzone = 6553"));
         assert!(text.contains("rightStickDeadzone = 6553"));
-        assert!(!text.contains("[dinput]"), "xinput 模式不写 dinput 节");
+        assert!(!text.contains("[dinput]"), "xinput mode does not write the dinput section");
 
         let mut dep2 = snapshot();
         dep2.input.kind = Some("dinput".into());
@@ -743,7 +743,7 @@ mod tests {
 
         assert!(text2.contains("reverseAccelAxis = false"));
         assert!(text2.contains("reverseBrakeAxis = false"));
-        assert!(!text2.contains("[xinput]"), "dinput 模式不写 xinput 节");
+        assert!(!text2.contains("[xinput]"), "dinput mode does not write the xinput section");
     }
 
     #[test]
@@ -765,8 +765,8 @@ mod tests {
         dep2.input.up_button = Some(DPAD_CODE_BASE + 1);
         dep2.input.left_button = Some(DPAD_CODE_BASE + 4);
         let text2 = render_idas(&dep2);
-        assert!(!text2.contains("up = "), "十字键伪码不应写入 dinput");
-        assert!(!text2.contains("left = "), "十字键伪码不应写入 dinput");
+        assert!(!text2.contains("up = "), "D-pad pseudo codes should not be written to dinput");
+        assert!(!text2.contains("left = "), "D-pad pseudo codes should not be written to dinput");
     }
 
     #[test]
@@ -802,8 +802,8 @@ mod tests {
         assert!(!text2.contains("viewChg ="));
         assert!(text2.contains("coin = Y"));
         assert!(text2.contains("card = START"));
-        assert!(text2.contains("accel = RT"), "油门源应写捕获的按钮名");
-        assert!(text2.contains("brake = LT"), "刹车源应写捕获的按钮名");
+        assert!(text2.contains("accel = RT"), "the throttle should be the captured button name");
+        assert!(text2.contains("brake = LT"), "the brake should be the captured button name");
 
         assert!(!text2.contains("up ="));
 
@@ -857,7 +857,7 @@ mod tests {
 
         assert_eq!(fs::read(game.join("mice.exe")).unwrap(), b"mice-bin");
         assert_eq!(fs::read(game.join("mice.dll")).unwrap(), b"dll-bin");
-        assert!(!game.join("config.ini").exists(), "不应复制工具自带 config.ini");
+        assert!(!game.join("config.ini").exists(), "the tool's own config.ini should not be copied");
         assert!(!game.join("idas.ini").exists());
         assert!(!game.join("mice.log").exists());
         assert!(!game.join("sram.bin").exists());
@@ -958,7 +958,7 @@ mod tests {
         let text = render_config(&dep, MiceTarget::Game);
         assert!(text.contains("naominet_jp = my.server.net"));
         assert!(text.contains("aime_naominet_jp = my.server.net"));
-        assert!(!text.contains("sdgt.arcadehub.xyz"), "自定义服务器时不再写默认域名");
+        assert!(!text.contains("sdgt.arcadehub.xyz"), "with a custom server the default domain is not written");
     }
 
     #[test]
@@ -979,7 +979,7 @@ mod tests {
             text.find("bind_ip = 192.168.100.101").unwrap() > text.find("[ServerBox]").unwrap(),
             "bind_ip must be inside the [ServerBox] section:\n{text}"
         );
-        assert!(!text.contains("[serverbox]"), "不应出现独立的 [serverbox] 节");
+        assert!(!text.contains("[serverbox]"), "there should be no separate [serverbox] section");
     }
 
     #[test]

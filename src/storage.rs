@@ -1162,7 +1162,7 @@ mod tests {
         assert_eq!(rec.card, None);
 
         let json = serde_json::to_string(&rec).unwrap();
-        assert!(!json.contains("\"card\""), "card=None 不应序列化");
+        assert!(!json.contains("\"card\""), "card=None should not be serialized");
 
         let mut rec2 = rec.clone();
         rec2.card = Some("InidCrd01234.png".into());

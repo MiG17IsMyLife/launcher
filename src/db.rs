@@ -355,8 +355,8 @@ mod tests {
 
     #[test]
     fn lookup_by_game_id_misses() {
-        assert!(lookup_by_game_id("SBZZ", "9.99.99").is_none(), "无此版本");
-        assert!(lookup_by_game_id("ZZZZ", "1.0").is_none(), "无此产品");
+        assert!(lookup_by_game_id("SBZZ", "9.99.99").is_none(), "no such version");
+        assert!(lookup_by_game_id("ZZZZ", "1.0").is_none(), "no such product");
 
         assert!(lookup_by_game_id("SBML", "REV A").is_none());
     }

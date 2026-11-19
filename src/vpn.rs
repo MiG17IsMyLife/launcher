@@ -436,7 +436,7 @@ mod tests {
     fn wintun_hint_appended_only_for_wintun_errors() {
         let with = append_wintun_hint("Cannot open Wintun adapter");
         assert!(with.starts_with("Cannot open Wintun adapter"));
-        assert!(with.contains("wintun.dll"), "wintun 相关错误应补提示：{with}");
+        assert!(with.contains("wintun.dll"), "a wintun error should get the hint: {with}");
 
         assert_eq!(append_wintun_hint("AUTH_FAILED"), "AUTH_FAILED");
     }

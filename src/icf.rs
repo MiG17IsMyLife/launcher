@@ -269,7 +269,7 @@ mod tests {
         cipher[10] ^= 0xFF;
         let p = write_temp_icf("tampered", &cipher);
         let err = parse_icf(&p).expect_err("a tampered ciphertext should fail");
-        assert!(err.contains("主 CRC32"), "实际错误：{err}");
+        assert!(err.contains("主 CRC32"), "actual error: {err}");
         std::fs::remove_file(&p).ok();
     }
 
@@ -284,20 +284,20 @@ mod tests {
         let crc = crc32fast::hash(&plain[4..]);
         plain[0..4].copy_from_slice(&crc.to_le_bytes());
         let err = parse_icf_bytes(&plain).expect_err("a truncated file should fail");
-        assert!(err.contains("条目数"), "实际错误：{err}");
+        assert!(err.contains("条目数"), "actual error: {err}");
     }
 
     #[test]
     fn too_short_data_fails() {
         let err = parse_icf_bytes(&[0u8; 0x20]).expect_err("a file that is too short should fail");
-        assert!(err.contains("小于头部大小"), "实际错误：{err}");
+        assert!(err.contains("小于头部大小"), "actual error: {err}");
     }
 
     #[test]
     fn non_block_sized_file_fails() {
         let p = write_temp_icf("garbage", &[0xABu8; 100]);
         let err = parse_icf(&p).expect_err("a length that is not a multiple of 16 should fail");
-        assert!(err.contains("AES 块大小"), "实际错误：{err}");
+        assert!(err.contains("AES 块大小"), "actual error: {err}");
         std::fs::remove_file(&p).ok();
     }
 
@@ -305,7 +305,7 @@ mod tests {
     fn no_enabled_app_entry_fails() {
         let plain = build_plain_icf(&[(true, SYSTEM, (2, 0, 0))]);
         let err = parse_icf_bytes(&plain).expect_err("a file without APP entries should fail");
-        assert!(err.contains("APP 条目"), "实际错误：{err}");
+        assert!(err.contains("APP 条目"), "actual error: {err}");
     }
 
     #[test]

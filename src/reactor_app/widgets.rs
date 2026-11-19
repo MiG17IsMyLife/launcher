@@ -224,7 +224,7 @@ mod tests {
         let r = record(Loader::Mice, Some("0x1fd6136a"), Some("SBZZ"), Some("2.01"), "InitialD Arcade Stage 8 JPN");
         assert!(record_matches_product(&r, "InitialD Arcade Stage 8 JPN"));
         assert!(!record_matches_product(&r, "InitialD Arcade Stage 8 EXP"));
-        assert!(!record_matches_product(&r, ""), "空产品名不匹配");
+        assert!(!record_matches_product(&r, ""), "an empty product name does not match");
     }
 
     #[test]

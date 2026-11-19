@@ -440,7 +440,7 @@ mod real_world_smoke {
         let r = identify(p).expect("kitten.exe should be identified");
         assert!(matches!(r.kind, FileKind::Pe { .. }));
         assert_ne!(r.crc, 0);
-        assert!(r.db.is_none(), "kitten.exe 本身不应命中游戏库");
+        assert!(r.db.is_none(), "kitten.exe itself should not match the game database");
         println!("kitten.exe crc = 0x{:08x}, arch = {}", r.crc, r.kind.arch());
     }
 }

@@ -845,7 +845,7 @@ mod tests {
         let game = tmp("cg_missing_game");
         let dep = tmp("cg_missing_dep");
         let err = ensure_cg_libs_from(&game, &dep).unwrap_err();
-        assert!(err.contains("cg.dll"), "应提示 cg.dll 缺失：{err}");
+        assert!(err.contains("cg.dll"), "the error should say cg.dll is missing: {err}");
         cleanup(&game);
         cleanup(&dep);
     }
@@ -1028,7 +1028,7 @@ mod tests {
         let tools = tools_with_gfx("gfx_off_tools");
         write(&dir.join("winmm.dll"), b"old");
         deploy_gfx_patch_from(&dir, false, &tools).unwrap();
-        assert!(!dir.join("winmm.dll").is_file(), "未勾选应移除 winmm.dll");
+        assert!(!dir.join("winmm.dll").is_file(), "with the switch off winmm.dll should be removed");
         cleanup(&dir);
         cleanup(&tools);
     }
@@ -1057,7 +1057,7 @@ mod tests {
         let sb_dir = serverbox_dir_of(&rec).expect("a configured ServerBox should resolve to a folder");
         for dir in [&game, &sb_dir] {
             deploy_gfx_patch_from(dir, true, &tools).unwrap();
-            assert!(dir.join("winmm.dll").is_file(), "{} 应有 winmm.dll", dir.display());
+            assert!(dir.join("winmm.dll").is_file(), "{} should have winmm.dll", dir.display());
             assert!(dir.join("scripts/shaderfix.asi").is_file());
         }
         cleanup(&game);
@@ -1135,11 +1135,11 @@ mod tests {
             DeployConfig::Kitten(s) => kitten::render(&s),
             _ => unreachable!(),
         };
-        assert!(!text.contains("[display]"), "ServerBox 侧不应有 [display] 节：\n{text}");
-        assert!(!text.contains("width ="), "分辨率不应写出：\n{text}");
-        assert!(!text.contains("anisotropic"), "各向异性不应写出：\n{text}");
+        assert!(!text.contains("[display]"), "the ServerBox side should have no [display] section:\n{text}");
+        assert!(!text.contains("width ="), "the resolution should not be written:\n{text}");
+        assert!(!text.contains("anisotropic"), "anisotropic filtering should not be written:\n{text}");
 
-        assert!(text.contains("[network]"), "网络节应保留：\n{text}");
+        assert!(text.contains("[network]"), "the network section should stay:\n{text}");
     }
 
     #[test]
@@ -1163,14 +1163,14 @@ mod tests {
         let dep2 = dep.clone().without_graphics();
         let DeployConfig::Mice(s) = &dep2 else { unreachable!() };
         let cfg = mice::render_config(s, mice::MiceTarget::ServerBox);
-        assert!(!cfg.contains("[window]"), "ServerBox config.ini 不应有 [window] 节：\n{cfg}");
-        assert!(!cfg.contains("windowed"), "windowed 键不应写出：\n{cfg}");
+        assert!(!cfg.contains("[window]"), "the ServerBox config.ini should have no [window] section:\n{cfg}");
+        assert!(!cfg.contains("windowed"), "the windowed key should not be written:\n{cfg}");
         let idas = mice::render_idas(s);
-        assert!(!idas.contains("render_scale"), "ServerBox idas.ini 不应写 render_scale：\n{idas}");
-        assert!(!idas.contains("[Graphics]"), "ServerBox idas.ini 不应有 [Graphics] 节：\n{idas}");
+        assert!(!idas.contains("render_scale"), "the ServerBox idas.ini should not write render_scale:\n{idas}");
+        assert!(!idas.contains("[Graphics]"), "the ServerBox idas.ini should have no [Graphics] section:\n{idas}");
 
-        assert!(cfg.contains("[network]"), "config.ini 网络节应保留：\n{cfg}");
-        assert!(idas.contains("simulateNetwork"), "idas.ini 模拟网络键应保留：\n{idas}");
+        assert!(cfg.contains("[network]"), "the network section of config.ini should stay:\n{cfg}");
+        assert!(idas.contains("simulateNetwork"), "the simulate network key of idas.ini should stay:\n{idas}");
     }
 
     #[test]

@@ -291,7 +291,7 @@ mod tests {
         for code in [&a, &b] {
             assert_eq!(code.len(), 20);
             assert!(code.chars().all(|c| c.is_ascii_digit()));
-            assert!(code.starts_with('5'), "aime 惯例首位为 5");
+            assert!(code.starts_with('5'), "aime access codes start with 5 by convention");
         }
 
         let scan = scan_aime_cards_in(&dir);
@@ -322,9 +322,9 @@ mod tests {
         let scan = scan_aime_cards_in(&dir);
         assert_eq!(scan.cards.len(), 2, "a txt that is not 20 digits should be skipped");
         assert_eq!(scan.cards[1].name, code);
-        assert!(dir.join(format!("{code}.txt")).is_file(), "应改名为 <code>.txt");
-        assert!(!dir.join("random_name.txt").exists(), "旧文件名应已不存在");
-        assert!(dir.join("note.txt").is_file(), "不合规文件原样保留");
+        assert!(dir.join(format!("{code}.txt")).is_file(), "the file should be renamed to <code>.txt");
+        assert!(!dir.join("random_name.txt").exists(), "the old file name should be gone");
+        assert!(dir.join("note.txt").is_file(), "a file that does not qualify is left as it is");
         assert!(!scan.cards.iter().any(|c| c.name == "note"));
         assert_eq!(scan.cards[0].name, "51112222333344445555");
 
