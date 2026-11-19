@@ -134,8 +134,33 @@ pub struct RunningGame {
     pub static_ip: Option<StaticIp>,
 }
 
+/// Controls shown for a game in the library.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct UiFeatures {
+    pub test_mode: bool,
+    pub graphics_patch: bool,
+    pub companion_executables: bool,
+    /// The extension shown for the selected card in the game row.
+    pub card_extension: &'static str,
+}
+
+/// Card format and artwork used by the card page.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum CardKind {
+    Id4,
+    #[default]
+    Id5,
+    Id6,
+    Id8,
+    Aime,
+}
+
 /// What the launcher needs to know about one family of games.
 pub trait GameFamily: Sync {
+    fn ui_features(&self) -> UiFeatures;
+
+    fn card_kind(&self, record: &GameRecord) -> CardKind;
+
     /// Whether these games have a ServerBox.
     fn has_serverbox(&self) -> bool;
 
@@ -298,6 +323,45 @@ pub(crate) mod test_input {
 mod tests {
     use super::test_input::record;
     use super::*;
+
+    #[test]
+    fn ui_features_match_existing_game_rows() {
+        let cases = [
+            (Loader::Kitten, Some("SBQZ"), UiFeatures { test_mode: true, graphics_patch: false, companion_executables: false, card_extension: "png" }),
+            (Loader::Mice, Some("SBZZ"), UiFeatures { test_mode: true, graphics_patch: true, companion_executables: false, card_extension: "png" }),
+            (Loader::Segatools, Some("SDGT"), UiFeatures { test_mode: false, graphics_patch: false, companion_executables: true, card_extension: "txt" }),
+            (Loader::Segatools, Some("SDDF"), UiFeatures { test_mode: false, graphics_patch: false, companion_executables: true, card_extension: "txt" }),
+            (Loader::Segatools, None, UiFeatures { test_mode: false, graphics_patch: false, companion_executables: true, card_extension: "txt" }),
+        ];
+        for (loader, id, expected) in cases {
+            let rec = record(loader, id);
+            assert_eq!(family_of(&rec).ui_features(), expected, "{id:?}");
+        }
+    }
+
+    #[test]
+    fn card_kind_preserves_known_and_unknown_game_ids() {
+        let cases = [
+            (Loader::Kitten, Some("SBML"), CardKind::Id4),
+            (Loader::Kitten, Some("SBQZ"), CardKind::Id5),
+            (Loader::Kitten, None, CardKind::Id5),
+            (Loader::Mice, Some("SBUU"), CardKind::Id6),
+            (Loader::Mice, Some("SBVW"), CardKind::Id6),
+            (Loader::Mice, Some("SBWV"), CardKind::Id6),
+            (Loader::Mice, Some("SBZZ"), CardKind::Id8),
+            (Loader::Mice, Some("SDAL"), CardKind::Id8),
+            (Loader::Mice, None, CardKind::Id5),
+            (Loader::Segatools, Some("SDDF"), CardKind::Aime),
+            (Loader::Segatools, Some("SDER"), CardKind::Aime),
+            (Loader::Segatools, Some("SDGT"), CardKind::Aime),
+            (Loader::Segatools, None, CardKind::Id5),
+            (Loader::Segatools, Some("UNKNOWN"), CardKind::Id5),
+        ];
+        for (loader, id, expected) in cases {
+            let rec = record(loader, id);
+            assert_eq!(family_of(&rec).card_kind(&rec), expected, "{id:?}");
+        }
+    }
 
     #[test]
     fn families_by_loader_and_game() {

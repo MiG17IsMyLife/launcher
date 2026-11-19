@@ -5,14 +5,31 @@
 //! `GameProject-Win64-Shipping.exe`. It has no ServerBox.
 
 use std::process::Child;
+use crate::storage::GameRecord;
 
 use rust_i18n::t;
 
-use super::{GameFamily, LaunchInput, LaunchProblem, Prepared, Started, alls};
+use super::{CardKind, UiFeatures, GameFamily, LaunchInput, LaunchProblem, Prepared, Started, alls};
 
 pub struct Idac;
 
 impl GameFamily for Idac {
+    fn ui_features(&self) -> UiFeatures {
+        UiFeatures {
+            test_mode: false,
+            graphics_patch: false,
+            companion_executables: true,
+            card_extension: "txt",
+        }
+    }
+
+    fn card_kind(&self, record: &GameRecord) -> CardKind {
+        match record.game_id.as_deref() {
+            Some("SDGT") => CardKind::Aime,
+            _ => CardKind::Id5,
+        }
+    }
+
     fn has_serverbox(&self) -> bool {
         false
     }

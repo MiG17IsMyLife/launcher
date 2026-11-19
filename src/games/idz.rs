@@ -5,15 +5,32 @@
 //! `ServerBoxD8_Nu_x64.exe` (or the `_CHN` one), which can be left running.
 
 use std::process::Child;
+use crate::storage::GameRecord;
 
 use rust_i18n::t;
 
-use super::{GameFamily, LaunchInput, LaunchProblem, Prepared, Started, alls};
+use super::{CardKind, UiFeatures, GameFamily, LaunchInput, LaunchProblem, Prepared, Started, alls};
 use crate::loaders::segatools;
 
 pub struct Idz;
 
 impl GameFamily for Idz {
+    fn ui_features(&self) -> UiFeatures {
+        UiFeatures {
+            test_mode: false,
+            graphics_patch: false,
+            companion_executables: true,
+            card_extension: "txt",
+        }
+    }
+
+    fn card_kind(&self, record: &GameRecord) -> CardKind {
+        match record.game_id.as_deref() {
+            Some("SDDF" | "SDER") => CardKind::Aime,
+            _ => CardKind::Id5,
+        }
+    }
+
     fn has_serverbox(&self) -> bool {
         false
     }

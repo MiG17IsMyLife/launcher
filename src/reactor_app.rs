@@ -180,13 +180,7 @@ pub struct Launcher {
 
     cards_game: Option<usize>,
 
-    cards_aime: bool,
-
-    cards_id4: bool,
-
-    cards_id8: bool,
-
-    cards_id6: bool,
+    card_kind: crate::games::CardKind,
 
     cards_loading: bool,
 
@@ -342,10 +336,7 @@ impl Component for Launcher {
             hovered: None,
             light_theme: system_uses_light_theme(),
             cards_game: None,
-            cards_aime: false,
-            cards_id4: false,
-            cards_id8: false,
-            cards_id6: false,
+            card_kind: crate::games::CardKind::default(),
             cards_loading: false,
             cards_warm: 0,
             cards: CardScan::default(),
@@ -497,7 +488,7 @@ impl Component for Launcher {
             }
             Message::CardsLoadTick => self.warm_card_cache(context),
             Message::AimeCardCreate => {
-                if !self.cards_aime {
+                if self.card_kind != crate::games::CardKind::Aime {
                     return;
                 }
                 let Some(dir) = self.aime_device_dir() else {
@@ -536,9 +527,7 @@ impl Component for Launcher {
             Message::BackToGames => {
                 self.nav_tag = "games".to_string();
                 self.cards_game = None;
-                self.cards_aime = false;
-                self.cards_id4 = false;
-                self.cards_id6 = false;
+                self.card_kind = crate::games::CardKind::default();
                 self.cards_loading = false;
                 self.cards_warm = 0;
             }

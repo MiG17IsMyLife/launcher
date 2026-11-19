@@ -8,7 +8,7 @@ use crate::db;
 use crate::detect::{self, IdentifyResult};
 use crate::icf;
 use rust_i18n::t;
-use crate::storage::{GameRecord, Loader};
+use crate::storage::GameRecord;
 
 use crate::reactor_app::Launcher;
 use crate::reactor_app::message::{CompanionKind, Dialog, IdentifyPayload, IcfPayload, Message, RowAction};
@@ -34,14 +34,41 @@ fn cover_file_exists(path: &str) -> bool {
     }
 }
 
+/// Sort by series while keeping the original library index for every row action.
+fn game_series_order(game: &GameRecord) -> (u8, u8) {
+    let identified = db::lookup_record(game);
+    let id = identified
+        .and_then(|matched| matched.game_id.as_deref())
+        .or(game.game_id.as_deref());
+    let series = match id {
+        Some("SBML") => 0,                          // D4 and D4 kai
+        Some("SBQZ" | "SBTS") => 1,                // D5
+        Some("SBUU" | "SBVW" | "SBWV") => 2,       // D6
+        Some("SBYD" | "SBYY") => 3,                // D7
+        Some("SBZZ" | "SDAL") => 4,                // D8
+        Some("SDDF" | "SDER") => 5,                // D Zero
+        Some("SDGT") => 6,                          // D The Arcade
+        _ => 7,
+    };
+    // D4 and D4 kai share SBML; prefer the identified product, falling back to
+    // the standard saved name for older records without a recognized CRC.
+    let product_name = identified.map(|matched| matched.name.as_str()).unwrap_or(&game.name);
+    let variant = u8::from(series == 0 && product_name.eq_ignore_ascii_case("InitialD Arcade Stage 4 kai JPN"));
+    (series, variant)
+}
+
+fn ordered_games(games: &[GameRecord]) -> Vec<(usize, &GameRecord)> {
+    let mut rows: Vec<_> = games.iter().enumerate().collect();
+    // Stable sorting preserves the existing order within each series.
+    rows.sort_by_key(|(_, game)| game_series_order(game));
+    rows
+}
+
 impl Launcher {
 
     pub(in crate::reactor_app) fn games_page(&self, context: &mut ViewContext<Self>) -> View {
-        let rows: Vec<KeyedView> = self
-            .library
-            .games
-            .iter()
-            .enumerate()
+        let rows: Vec<KeyedView> = ordered_games(&self.library.games)
+            .into_iter()
             .map(|(i, g)| self.game_row(context, i, g))
             .collect();
 
@@ -206,6 +233,7 @@ impl Launcher {
             };
 
             let sb_supported = record_db_match(game).and_then(|m| m.sb_crc).is_some();
+            let features = crate::games::family_of(game).ui_features();
 
             let game_running_here = self.game_running
                 && self.game_runtime.as_ref().map(|r| r.index) == Some(index);
@@ -217,17 +245,9 @@ impl Launcher {
 
             let cards_desc = match game.card.clone().or_else(|| self.store.load_card()) {
                 Some(c) => {
-                    let file = if game.loader == Loader::Segatools {
-                        if c.ends_with(".txt") {
-                            c
-                        } else {
-                            format!("{c}.txt")
-                        }
-                    } else if c.ends_with(".png") {
-                        c
-                    } else {
-                        format!("{c}.png")
-                    };
+                    let extension = features.card_extension;
+                    let suffix = format!(".{extension}");
+                    let file = if c.ends_with(&suffix) { c } else { format!("{c}{suffix}") };
                     t!("page_games.current_card", file = file).to_string()
                 }
                 None => t!("page_games.not_selected").to_string(),
@@ -246,7 +266,7 @@ impl Launcher {
                                 .on_click(context.message(Message::LaunchStop(index)))
                                 .content(t!("common.close").to_string())
                                 .into()
-                        } else if game.loader == Loader::Segatools {
+                        } else if !features.test_mode {
                             Button::new()
                                 .style(ButtonStyle::Accent)
                                 .on_click(context.message(Message::RowMenu {
@@ -323,7 +343,7 @@ impl Launcher {
                 ),
             ));
 
-                if game.loader == Loader::Mice {
+                if features.graphics_patch {
                     rows.insert(1, KeyedView::new("drop-sep-gfx", separator()));
                     rows.insert(
                         2,
@@ -404,7 +424,7 @@ impl Launcher {
                 ));
             }
 
-            if game.loader == Loader::Segatools {
+            if features.companion_executables {
                 let companion_row = |key: &str,
                                      title: String,
                                      configured: Option<&String>,
@@ -811,6 +831,55 @@ impl Launcher {
 
             CompanionKind::Amdaemon | CompanionKind::GameExe => {}
         }
+    }
+
+}
+
+#[cfg(test)]
+mod order_tests {
+    use super::*;
+    use crate::games::test_input::record;
+    use crate::storage::Loader;
+
+    #[test]
+    fn sorts_series_but_keeps_original_indices_and_order_within_series() {
+        let games = vec![
+            record(Loader::Segatools, Some("SDGT")),
+            record(Loader::Mice, Some("SBYY")),
+            record(Loader::Kitten, Some("SBQZ")),
+            record(Loader::Mice, Some("SBZZ")),
+            record(Loader::Kitten, Some("SBML")),
+            record(Loader::Segatools, Some("SDDF")),
+            record(Loader::Mice, Some("SBUU")),
+            record(Loader::Kitten, Some("SBTS")),
+            record(Loader::Mice, None),
+        ];
+        let indices: Vec<_> = ordered_games(&games).iter().map(|(i, _)| *i).collect();
+        assert_eq!(indices, [4, 2, 7, 6, 1, 3, 5, 0, 8]);
+    }
+
+    #[test]
+    fn uses_identified_build_for_older_records_without_a_game_id() {
+        let mut game = record(Loader::Kitten, None);
+        game.crc = Some("0xda04e5e0".into());
+        assert_eq!(game_series_order(&game), (1, 0));
+    }
+    #[test]
+    fn d4_precedes_kai_even_when_kai_was_added_first() {
+        let mut kai = record(Loader::Kitten, Some("SBML"));
+        kai.crc = Some("0x6cb19701".into());
+        let mut d4 = record(Loader::Kitten, Some("SBML"));
+        d4.crc = Some("0x361d1cbe".into());
+        let games = vec![kai, d4];
+        let indices: Vec<_> = ordered_games(&games).iter().map(|(i, _)| *i).collect();
+        assert_eq!(indices, [1, 0]);
+    }
+
+    #[test]
+    fn saved_d4_kai_name_is_used_when_crc_is_missing() {
+        let mut kai = record(Loader::Kitten, Some("SBML"));
+        kai.name = "InitialD Arcade Stage 4 kai JPN".into();
+        assert_eq!(game_series_order(&kai), (0, 1));
     }
 
 }

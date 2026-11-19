@@ -12,13 +12,30 @@ use std::process::Child;
 
 use rust_i18n::t;
 
-use super::{GameFamily, LaunchInput, LaunchProblem, Prepared, Started, game_dir_of, gfx_patch, idas, initiald, serverbox};
+use super::{CardKind, UiFeatures, GameFamily, LaunchInput, LaunchProblem, Prepared, Started, game_dir_of, gfx_patch, idas, initiald, serverbox};
 use crate::loaders::{self, mice};
 use crate::storage::{GameRecord, GraphicsConfig};
 
 pub struct IdasRingEdge;
 
 impl GameFamily for IdasRingEdge {
+    fn ui_features(&self) -> UiFeatures {
+        UiFeatures {
+            test_mode: true,
+            graphics_patch: true,
+            companion_executables: false,
+            card_extension: "png",
+        }
+    }
+
+    fn card_kind(&self, record: &GameRecord) -> CardKind {
+        match record.game_id.as_deref() {
+            Some("SBUU" | "SBVW" | "SBWV") => CardKind::Id6,
+            Some("SBZZ" | "SDAL") => CardKind::Id8,
+            _ => CardKind::Id5,
+        }
+    }
+
     fn has_serverbox(&self) -> bool {
         true
     }

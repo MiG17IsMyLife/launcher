@@ -12,7 +12,7 @@ use std::process::Child;
 
 use rust_i18n::t;
 
-use super::{GameFamily, LaunchInput, LaunchProblem, Prepared, Started, idas, initiald, serverbox};
+use super::{CardKind, UiFeatures, GameFamily, LaunchInput, LaunchProblem, Prepared, Started, idas, initiald, serverbox};
 use crate::db;
 use crate::loaders::{self, kitten};
 use crate::storage::{GameRecord, GraphicsConfig};
@@ -20,6 +20,23 @@ use crate::storage::{GameRecord, GraphicsConfig};
 pub struct IdasLindbergh;
 
 impl GameFamily for IdasLindbergh {
+    fn ui_features(&self) -> UiFeatures {
+        UiFeatures {
+            test_mode: true,
+            graphics_patch: false,
+            companion_executables: false,
+            card_extension: "png",
+        }
+    }
+
+    fn card_kind(&self, record: &GameRecord) -> CardKind {
+        if record.game_id.as_deref() == Some("SBML") {
+            CardKind::Id4
+        } else {
+            CardKind::Id5
+        }
+    }
+
     fn has_serverbox(&self) -> bool {
         true
     }

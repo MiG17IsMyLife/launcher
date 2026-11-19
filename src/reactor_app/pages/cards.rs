@@ -7,7 +7,7 @@ use windows_reactor::*;
 
 use crate::cards::{self, CardEntry, CardScan};
 use rust_i18n::t;
-use crate::storage::Loader;
+use crate::games::CardKind;
 
 use crate::reactor_app::Launcher;
 use crate::reactor_app::message::Message;
@@ -95,7 +95,7 @@ impl Launcher {
             return placeholder_page(&t!("common.card_select"), &t!("page_cards.game_no_longer_exists"));
         };
         let _ = game;
-        let aime_mode = self.cards_aime;
+        let aime_mode = self.card_kind == CardKind::Aime;
 
         let aime_item_w = CARD_W * CARD_DISPLAY_SCALE;
         let aime_item_h = aime_item_w * AIME_BASE_H / AIME_BASE_W;
@@ -190,11 +190,11 @@ impl Launcher {
                 );
             }
 
-            let (bw, bh) = if self.cards_id4 {
+            let (bw, bh) = if self.card_kind == CardKind::Id4 {
                 (ID4_BASE_W, ID4_BASE_H)
-            } else if self.cards_id6 {
+            } else if self.card_kind == CardKind::Id6 {
                 (ID6_BASE_W, ID6_BASE_H)
-            } else if self.cards_id8 {
+            } else if self.card_kind == CardKind::Id8 {
                 (ID8_BASE_W, ID8_BASE_H)
             } else {
                 (CARD_BASE_W, CARD_BASE_H)
@@ -411,11 +411,11 @@ impl Launcher {
         if self.base_cache.borrow().is_some() {
             return;
         }
-        let png = if self.cards_id4 {
+        let png = if self.card_kind == CardKind::Id4 {
             ID4_BASE_PNG
-        } else if self.cards_id6 {
+        } else if self.card_kind == CardKind::Id6 {
             ID6_BASE_PNG
-        } else if self.cards_id8 {
+        } else if self.card_kind == CardKind::Id8 {
             ID8_BASE_PNG
         } else {
             CARD_BASE_PNG
@@ -432,7 +432,7 @@ impl Launcher {
     }
 
     fn card_car_offset(&self) -> (i64, i64) {
-        if self.cards_id4 {
+        if self.card_kind == CardKind::Id4 {
             (-5, CARD_CAR_OFFSET_Y)
         } else {
             (CARD_CAR_OFFSET_X, CARD_CAR_OFFSET_Y)
@@ -532,11 +532,11 @@ impl Launcher {
     }
 
     fn card_fallback_size(&self) -> (f64, f64) {
-        let (bw, bh) = if self.cards_id4 {
+        let (bw, bh) = if self.card_kind == CardKind::Id4 {
             (ID4_BASE_W, ID4_BASE_H)
-        } else if self.cards_id6 {
+        } else if self.card_kind == CardKind::Id6 {
             (ID6_BASE_W, ID6_BASE_H)
-        } else if self.cards_id8 {
+        } else if self.card_kind == CardKind::Id8 {
             (ID8_BASE_W, ID8_BASE_H)
         } else {
             (CARD_BASE_W, CARD_BASE_H)
@@ -659,18 +659,8 @@ impl Launcher {
         self.cards_loading = true;
         self.cards_warm = 0;
 
-        self.cards_aime = rec.loader == Loader::Segatools
-            && matches!(rec.game_id.as_deref(), Some("SDDF") | Some("SDER") | Some("SDGT"));
-
-        self.cards_id4 = rec.loader == Loader::Kitten
-            && matches!(rec.game_id.as_deref(), Some("SBML"));
-
-        self.cards_id6 = rec.loader == Loader::Mice
-            && matches!(rec.game_id.as_deref(), Some("SBUU") | Some("SBVW") | Some("SBWV"));
-
-        self.cards_id8 = rec.loader == Loader::Mice
-            && matches!(rec.game_id.as_deref(), Some("SBZZ") | Some("SDAL"));
-        if self.cards_aime {
+        self.card_kind = crate::games::family_of(rec).card_kind(rec);
+        if self.card_kind == CardKind::Aime {
             let dir = self.aime_device_dir();
             context.spawn_background(move |_| {
                 let scan = match dir {
@@ -694,7 +684,7 @@ impl Launcher {
             .or_else(|| self.store.load_card());
         self.cards = *scan;
 
-        if !self.cards_aime
+        if self.card_kind != CardKind::Aime
             && self.cards.cards.is_empty()
             && self.cards.active.is_none()
         {
@@ -707,7 +697,7 @@ impl Launcher {
             }
             self.cards.active = Some(name);
         }
-        if self.cards_aime {
+        if self.card_kind == CardKind::Aime {
 
             self.cards_loading = false;
         } else {

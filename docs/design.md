@@ -338,12 +338,13 @@ The games are grouped into families that are launched the same way (`src/games/`
 
 `games::family_of` picks the family from the record's loader and game id. Each family implements `GameFamily`:
 
+- `ui_features`: the game row controls and selected-card extension; `card_kind`: the card page format and artwork (unknown IDs retain the existing ID5 fallback);
 - `check`: the settings this family needs, beyond the region, keychip and network that every game needs;
 - `prepare`: write the configs and copy the tools into the game folder;
 - `start`: start the helpers (card reader, amdaemon) and the game, and say what to end when it exits;
 - `launch_serverbox`: start the ServerBox, for the families that have one.
 
-`games::launch_game` runs these in order (sections 1.1–1.7 describe what each family does), and adds the ServerBox's static IP between `prepare` and `start` for families with a ServerBox. The interface only gathers a `LaunchInput` from the settings in effect and shows the result; a `LaunchProblem` names the page where the user can fix a missing setting.
+`games::launch_game` runs these in order (sections 1.1–1.7 describe what each family does), and adds the ServerBox's static IP between `prepare` and `start` for families with a ServerBox. The interface gathers a `LaunchInput` from the settings in effect and shows the result; a `LaunchProblem` names the page where the user can fix a missing setting. The game row and card page take their family-specific choices from these methods. The ServerBox row remains conditional on the matched build having a ServerBox CRC.
 
 **Adding a game family**: write `src/games/<family>.rs` implementing `GameFamily`, and return it from `family_of`. Shared steps (card reader, graphics patch, ServerBox, `initialD.ini`) are in their own modules; the loader modules in `src/loaders/` only render config files.
 
