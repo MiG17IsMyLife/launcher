@@ -3,7 +3,7 @@ use std::sync::OnceLock;
 
 use serde::Deserialize;
 
-use crate::storage::Loader;
+use crate::storage::{GameRecord, Loader};
 
 #[derive(Clone, Debug)]
 pub struct DbMatch {
@@ -182,6 +182,14 @@ pub fn lookup_ref(crc: u32, loader: Loader) -> Option<&'static DbMatch> {
 
 pub fn lookup(crc: u32, loader: Loader) -> Option<DbMatch> {
     lookup_ref(crc, loader).cloned()
+}
+
+/// The database entry of a library record, by the CRC it was added with.
+pub fn lookup_record(game: &GameRecord) -> Option<&'static DbMatch> {
+    let s = game.crc.as_deref()?;
+    let hex = s.strip_prefix("0x").or_else(|| s.strip_prefix("0X")).unwrap_or(s);
+    let crc = u32::from_str_radix(hex.trim(), 16).ok()?;
+    lookup_ref(crc, game.loader)
 }
 
 pub fn lookup_by_game_id(game_id: &str, version: &str) -> Option<DbMatch> {

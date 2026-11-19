@@ -3,8 +3,8 @@ use std::path::{Path, PathBuf};
 
 use rust_i18n::t;
 
-use crate::mice;
-use crate::render_util::{bool_str, copy_tool_files, deadzone_value, nx_num, push_xi_button, Sections, split_resolution};
+use super::mice;
+use super::render_util::{bool_str, copy_tool_files, deadzone_value, nx_num, push_xi_button, Sections, split_resolution};
 use crate::storage::{
     CoinConfig, DPAD_CODE_BASE, GameRecord, GraphicsConfig, InputConfig, INPUT_RATIO_DEFAULT,
     NetworkConfig, SystemConfig,
@@ -186,13 +186,13 @@ pub fn render(dep: &DeploySnapshot) -> String {
         .unwrap_or(false)
     {
         if let Some(v) = dep.input.wheel_device.as_deref() {
-            s.push("dinput", "deviceName", v.trim());
+            s.push("dinput", "deviceName", v.trim_matches(|c: char| c.is_whitespace() || c.is_control()));
         }
         if let Some(v) = dep.input.pedal_device.as_deref() {
-            s.push("dinput", "pedalsName", v.trim());
+            s.push("dinput", "pedalsName", v.trim_matches(|c: char| c.is_whitespace() || c.is_control()));
         }
         if let Some(v) = dep.input.shifter_device.as_deref() {
-            s.push("dinput", "shifterName", v.trim());
+            s.push("dinput", "shifterName", v.trim_matches(|c: char| c.is_whitespace() || c.is_control()));
         }
         if let Some(n) = dep.input.start_button {
             s.push("dinput", "start", &n.to_string());
@@ -226,10 +226,10 @@ pub fn render(dep: &DeploySnapshot) -> String {
         }
 
         if let Some(ref n) = dep.input.throttle_axis {
-            s.push("dinput", "accelAxis", n);
+            s.push("dinput", "accelAxis", &n.trim().to_ascii_uppercase());
         }
         if let Some(ref n) = dep.input.brake_axis {
-            s.push("dinput", "brakeAxis", n);
+            s.push("dinput", "brakeAxis", &n.trim().to_ascii_uppercase());
         }
 
         s.push("dinput", "reverseAccelAxis", bool_str(dep.input.reverse_accel_axis.unwrap_or(false)));
@@ -455,16 +455,17 @@ mod tests {
     fn render_dinput_reverse_axes_true() {
         let mut dep = snapshot();
         dep.input.kind = Some("dinput".into());
-        dep.input.wheel_device = Some("Thrustmaster Wheel".into());
+        dep.input.wheel_device = Some("Thrustmaster Wheel\u{90}".into());
         dep.input.throttle_axis = Some("Y".into());
-        dep.input.brake_axis = Some("RZ".into());
+        dep.input.brake_axis = Some("Rz".into());
         dep.input.reverse_accel_axis = Some(true);
         dep.input.reverse_brake_axis = Some(true);
 
         let text = render(&dep);
 
         assert!(text.contains("[dinput]"));
-        assert!(text.contains("deviceName = Thrustmaster Wheel"));
+        assert!(text.contains("deviceName = Thrustmaster Wheel\n"));
+        assert!(!text.contains('\u{90}'));
         assert!(text.contains("accelAxis = Y"));
         assert!(text.contains("brakeAxis = RZ"));
         assert!(text.contains("reverseAccelAxis = true"));

@@ -433,7 +433,7 @@ pub struct VpnConfig {
 }
 
 pub fn normalize_device_name(saved: &str) -> &str {
-    let trimmed = saved.trim_end();
+    let trimmed = saved.trim_end_matches(|c: char| c.is_whitespace() || c.is_control());
     for (open, close) in [('（', '）'), ('(', ')')] {
         if trimmed.ends_with(close) {
             if let Some(i) = trimmed.rfind(open) {
@@ -900,6 +900,7 @@ mod tests {
         );
 
         assert_eq!(normalize_device_name("Wireless Controller"), "Wireless Controller");
+        assert_eq!(normalize_device_name("R3 Racing Wheel and Pedals\u{90}"), "R3 Racing Wheel and Pedals");
         assert_eq!(normalize_device_name("  Wheel  "), "  Wheel");
     }
 

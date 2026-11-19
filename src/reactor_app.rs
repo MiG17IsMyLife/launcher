@@ -18,7 +18,7 @@ use crate::cards::{self, CardScan};
 use crate::awl::{AwlHandle, PeerView, RoomStatus};
 use crate::filedialog;
 use crate::i18n::{self, Lang};
-use crate::launch;
+use crate::loaders;
 use crate::netinfo::{self, AdapterInfo};
 use crate::rawinput;
 use crate::roomdir::RoomSummary;
@@ -43,7 +43,7 @@ pub struct Launcher {
     store: storage::Store,
     library: Library,
     settings: Settings,
-    detected: launch::LoaderPaths,
+    detected: loaders::LoaderPaths,
     server_state: ServerState,
     nav_tag: String,
     pane_open: bool,
@@ -249,7 +249,7 @@ impl Component for Launcher {
         let room = store.load_room();
         let lang = store.load_lang();
         i18n::set_lang(lang);
-        let detected = launch::detect_loaders();
+        let detected = loaders::detect_loaders();
 
         let server_host0 = net.server_host().to_string();
         context.spawn_background(move |_| {
@@ -1384,11 +1384,8 @@ impl Launcher {
                     self.launch_overlay = None;
                 }
 
-                let added_static_ip = rt.as_ref().and_then(|r| r.added_static_ip.clone());
-                if let Some((adapter, ip)) = added_static_ip {
-                    context.spawn_background(move |_| {
-                        Message::StaticIpRemoved(launch::remove_serverbox_static_ip(&adapter, &ip))
-                    });
+                if let Some(ip) = rt.as_ref().and_then(|r| r.static_ip.clone()) {
+                    context.spawn_background(move |_| Message::StaticIpRemoved(ip.remove()));
                 }
                 context.spawn_background(move |_| {
                     if let Some(r) = &rt {

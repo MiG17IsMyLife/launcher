@@ -73,7 +73,6 @@ kitten:
   failed_to_create_mice_config: "mice の設定フォルダの作成に失敗しました（%{mice_dir}）: %{error}"
 
 launch:
-  game_launch_is_missing_config: "ゲームの起動に必要な設定のスナップショットがないか、ローダーと一致しません（内部エラー）"
   kitten_exe_not_found: "kitten.exe が見つかりません。ローダーをランチャーのサブフォルダ（例: launcher\\tools\\kitten\\kitten.exe）に置くか、設定でパスを指定してください"
   kitten_loader_does_not_exist: "kitten ローダーが存在しません: %{path}"
   mice_exe_mice64_exe_not: "mice.exe / mice64.exe が見つかりません。ローダーをランチャーのサブフォルダ（例: launcher\\mice\\mice.exe）に置くか、設定でパスを指定してください"
@@ -107,8 +106,7 @@ launch:
   failed_to_start_amdaemon: "amdaemon の起動に失敗しました（%{inject}）: %{error}"
   failed_to_start_game: "ゲームの起動に失敗しました（%{game_exe}）: %{error}"
   failed_to_start_loader: "ローダーの起動に失敗しました（%{loader}）: %{error}"
-  segatools_cannot_launch_this_way: "segatools ローダーは ServerBox やこの起動方法にまだ対応していません"
-  dependency_not_found: "%{name} が見つかりません: %{src}\n（%{name} を tools/dependency/ に置き、ランチャーと一緒に配布してください）"
+  cg_runtime_not_found: "cg.dll / cgGL.dll が見つかりません。2 つとも %{dir} に置くか、NVIDIA Cg Toolkit をインストールしてください"
 
 mice:
   target_directory_does_not_exist: "配置先のフォルダが存在しません: %{dir}"

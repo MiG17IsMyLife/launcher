@@ -73,7 +73,6 @@ kitten:
   failed_to_create_mice_config: "创建 mice 配置目录失败（%{mice_dir}）：%{error}"
 
 launch:
-  game_launch_is_missing_config: "游戏启动缺少配置快照或快照与加载器不匹配（内部错误）"
   kitten_exe_not_found: "未找到 kitten.exe，请将加载器放入启动器子目录（如 launcher\\tools\\kitten\\kitten.exe），或在设置中指定路径"
   kitten_loader_does_not_exist: "kitten 加载器不存在：%{path}"
   mice_exe_mice64_exe_not: "未找到 mice.exe/mice64.exe，请将加载器放入启动器子目录（如 launcher\\mice\\mice.exe），或在设置中指定路径"
@@ -107,8 +106,7 @@ launch:
   failed_to_start_amdaemon: "启动 amdaemon 失败（%{inject}）：%{error}"
   failed_to_start_game: "启动游戏失败（%{game_exe}）：%{error}"
   failed_to_start_loader: "启动加载器失败（%{loader}）：%{error}"
-  segatools_cannot_launch_this_way: "segatools 游戏暂不支持 ServerBox / 该启动路径"
-  dependency_not_found: "未找到 %{name}：%{src}\n（请将 %{name} 放入 tools/dependency/，随启动器打包附上）"
+  cg_runtime_not_found: "未找到 cg.dll / cgGL.dll：请将两者放入 %{dir}，或安装 NVIDIA Cg Toolkit"
 
 mice:
   target_directory_does_not_exist: "目标目录不存在：%{dir}"

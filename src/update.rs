@@ -955,6 +955,11 @@ fn http_download_to_file(
     use std::sync::atomic::Ordering;
     let tmp = out.with_extension("part");
     let _ = std::fs::remove_file(&tmp);
+    // A launcher put in a new folder has no tools\ yet; the first update creates it.
+    if let Some(dir) = tmp.parent() {
+        std::fs::create_dir_all(dir)
+            .map_err(|e| t!("update.failed_to_create_temp_file", error = e).to_string())?;
+    }
     let mut file = std::fs::File::create(&tmp)
         .map_err(|e| t!("update.failed_to_create_temp_file", error = e).to_string())?;
     let urls: Vec<String> = std::iter::once(primary_url.to_string())

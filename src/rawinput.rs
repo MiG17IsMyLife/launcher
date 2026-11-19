@@ -168,9 +168,9 @@ fn axis_usage_name(usage: u16) -> String {
         0x30 => "X",
         0x31 => "Y",
         0x32 => "Z",
-        0x33 => "Rx",
-        0x34 => "Ry",
-        0x35 => "Rz",
+        0x33 => "RX",
+        0x34 => "RY",
+        0x35 => "RZ",
         0x36 => "Slider",
         0x37 => "Dial",
         0x38 => "Wheel",
@@ -216,7 +216,8 @@ unsafe fn hid_product_name(path: &str) -> Option<String> {
         return None;
     }
     let end = buf.iter().position(|&c| c == 0).unwrap_or(buf.len());
-    let name = String::from_utf16_lossy(&buf[..end]).trim().to_string();
+    let name = String::from_utf16_lossy(&buf[..end]);
+    let name = name.trim_matches(|c: char| c.is_whitespace() || c.is_control()).to_string();
     (!name.is_empty()).then_some(name)
 }
 

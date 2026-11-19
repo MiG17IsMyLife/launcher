@@ -73,7 +73,6 @@ kitten:
   failed_to_create_mice_config: "Failed to create mice config directory (%{mice_dir}): %{error}"
 
 launch:
-  game_launch_is_missing_config: "Game launch is missing the config snapshot or the snapshot does not match the loader (internal error)"
   kitten_exe_not_found: "kitten.exe not found. Put the loader under the launcher subdirectory (e.g. launcher\\tools\\kitten\\kitten.exe), or specify its path in settings"
   kitten_loader_does_not_exist: "kitten loader does not exist: %{path}"
   mice_exe_mice64_exe_not: "mice.exe/mice64.exe not found. Put the loader under the launcher subdirectory (e.g. launcher\\mice\\mice.exe), or specify its path in settings"
@@ -107,8 +106,7 @@ launch:
   failed_to_start_amdaemon: "Failed to start amdaemon (%{inject}): %{error}"
   failed_to_start_game: "Failed to start game (%{game_exe}): %{error}"
   failed_to_start_loader: "Failed to start loader (%{loader}): %{error}"
-  segatools_cannot_launch_this_way: "The segatools loader does not support ServerBox / this launch path yet"
-  dependency_not_found: "%{name} not found: %{src}\n(Put %{name} under tools/dependency/ and ship it with the launcher)"
+  cg_runtime_not_found: "cg.dll / cgGL.dll not found: put both in %{dir}, or install the NVIDIA Cg Toolkit"
 
 mice:
   target_directory_does_not_exist: "Target directory does not exist: %{dir}"

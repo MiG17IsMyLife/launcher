@@ -744,7 +744,7 @@ impl Launcher {
                 }
             }
 
-            self.detected = crate::launch::detect_loaders();
+            self.detected = crate::loaders::detect_loaders();
         }
         Err(e) => {
             if let Ok(mut s) = self.update_shared.lock() {

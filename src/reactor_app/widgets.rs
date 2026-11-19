@@ -31,13 +31,7 @@ pub(super) fn binding_label(value: u32) -> String {
 }
 
 pub(super) fn record_db_match_ref(game: &GameRecord) -> Option<&'static db::DbMatch> {
-    let s = game.crc.as_deref()?;
-    let s = s
-        .strip_prefix("0x")
-        .or_else(|| s.strip_prefix("0X"))
-        .unwrap_or(s);
-    let crc = u32::from_str_radix(s, 16).ok()?;
-    db::lookup_ref(crc, game.loader)
+    db::lookup_record(game)
 }
 
 pub(super) fn record_db_match(game: &GameRecord) -> Option<db::DbMatch> {

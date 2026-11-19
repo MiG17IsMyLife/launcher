@@ -3,6 +3,9 @@ use std::path::{Path, PathBuf};
 
 use rust_i18n::t;
 
+use crate::db;
+use crate::storage::GameRecord;
+
 const INI_NAME: &str = "initialD.ini";
 
 const NEWS_PORT: u16 = 8086;
@@ -29,6 +32,15 @@ fn idas_version(game_id: &str) -> Option<u8> {
         "SBYD" | "SBYY" => Some(7),
         _ => None,
     }
+}
+
+/// Rewrites `initialD.ini` in the game's folder for the server `host`, when the game is
+/// one of D4–D7 (known by the database's game id, or else the record's own).
+pub fn patch_for(record: &GameRecord, host: &str) -> Result<bool, String> {
+    let game_id = db::lookup_record(record)
+        .and_then(|m| m.game_id.clone())
+        .or_else(|| record.game_id.clone());
+    patch_game_ini(&super::game_dir_of(record), game_id.as_deref(), host)
 }
 
 pub fn patch_game_ini(game_dir: &Path, game_id: Option<&str>, host: &str) -> Result<bool, String> {

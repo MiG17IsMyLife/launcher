@@ -38,14 +38,14 @@ impl Launcher {
 
     pub(in crate::reactor_app) fn room_net_override(
         &self,
-    ) -> Option<crate::mice::RoomNetOverride> {
+    ) -> Option<crate::loaders::mice::RoomNetOverride> {
         match &self.room_status {
-            RoomStatus::Hosting { .. } => Some(crate::mice::RoomNetOverride {
+            RoomStatus::Hosting { .. } => Some(crate::loaders::mice::RoomNetOverride {
                 cidr: crate::awl::ROOM_CIDR.to_string(),
                 my_game_ip: None,
                 server_ip: crate::awl::HOST_SERVERBOX_IP.to_string(),
             }),
-            RoomStatus::Joined { .. } => Some(crate::mice::RoomNetOverride {
+            RoomStatus::Joined { .. } => Some(crate::loaders::mice::RoomNetOverride {
                 cidr: crate::awl::ROOM_CIDR.to_string(),
                 my_game_ip: self.room_my_ip.clone(),
                 server_ip: crate::awl::HOST_SERVERBOX_IP.to_string(),

@@ -3,7 +3,7 @@ use std::path::Path;
 
 use rust_i18n::t;
 
-use crate::render_util::{bool_str, copy_tool_files, deadzone_value, push_xi_button, Sections, split_resolution};
+use super::render_util::{bool_str, copy_tool_files, deadzone_value, push_xi_button, Sections, split_resolution};
 use crate::storage::{
     CoinConfig, DPAD_CODE_BASE, GraphicsConfig, InputConfig, INPUT_RATIO_DEFAULT, NetworkConfig,
     SystemConfig,

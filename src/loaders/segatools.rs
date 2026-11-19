@@ -3,8 +3,8 @@ use std::path::{Path, PathBuf};
 
 use rust_i18n::t;
 
-use crate::mice::{format_ipv4, parse_cidr, write_atomic, RoomNetOverride};
-use crate::render_util::{deadzone_value, push_xi_button, Sections};
+use super::mice::{format_ipv4, parse_cidr, write_atomic, RoomNetOverride};
+use super::render_util::{deadzone_value, push_xi_button, Sections};
 use crate::storage::{
     CoinConfig, DPAD_CODE_BASE, GraphicsConfig, InputConfig, INPUT_RATIO_DEFAULT, NetworkConfig,
     SystemConfig,
@@ -666,7 +666,7 @@ pub fn deploy(dir: &Path, tool_dir: &Path, dep: &DeploySnapshot) -> Result<(), S
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::mice::{format_ipv4, last_host, mask_of, parse_cidr};
+    use crate::loaders::mice::{format_ipv4, last_host, mask_of, parse_cidr};
 
     fn snapshot() -> DeploySnapshot {
         DeploySnapshot {

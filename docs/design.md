@@ -27,7 +27,7 @@ launcher folder\
     ├── segatools\              ← inject.exe and dependencies; idz\ and idac\ hold each game's hook dll etc.
     ├── asi-loader\             ← Ultimate-ASI-Loader (dinput8.dll, for the graphics patch)
     ├── shaderfix\              ← shaderfix plugin (deployed with winmm.dll as the game folder's scripts\)
-    ├── dependency\             ← picodaemon.exe, cg.dll, cgGL.dll (copied into the game folder at launch)
+    ├── dependency\             ← picodaemon.exe, cg.dll, cgGL.dll (copied into the game folder at launch; without the Cg dlls, the installed NVIDIA Cg Toolkit's are used)
     ├── awl\                    ← awl-tray.exe (in-store versus virtual LAN)
     └── openvpn\                ← openvpn.exe (+ wintun.dll, for the VPN)
 ```
@@ -158,7 +158,7 @@ This applies only to games whose **loader is segatools** (SDGT = the IDAC season
 
 kitten and mice games get their card reader prepared **before launch** (segatools games emulate aime themselves and have no card reader process):
 
-1. **Provisioning**: when the game folder has no `picodaemon.exe` (or has one whose CRC is not a known one), a copy is taken from `tools\dependency\picodaemon.exe`; if that is missing, the launch stops with an error. kitten games also get `cg.dll` / `cgGL.dll`.
+1. **Provisioning**: when the game folder has no `picodaemon.exe` (or has one whose CRC is not a known one), a copy is taken from `tools\dependency\picodaemon.exe`; if that is missing, the launch stops with an error. kitten games also get `cg.dll` / `cgGL.dll`: both from `tools\dependency\` when it has both, otherwise both from the installed NVIDIA Cg Toolkit (the folder its installer records in `CG_BIN_PATH`).
 2. **`mice.exe` and `mice.dll`** of the mice tool folder are copied into the game folder (overwriting files of the same name, skipping identical ones).
 3. `<game folder>\mice\idas.ini` is written: `[CardReader] auto_insert` (the "Auto-insert card" switch on the System page) and `cardfile` (the card chosen for this game), `[ServerBox] game_ip` (this machine's game IP).
    - **kitten games only** also get the input backend and the card button: `[io3] mode` (from the input type on the Input page) and `[xinput] card` (the captured card button's name, not written when not captured). The kitten game process does not handle card insertion; the reader-side mice reads it.
@@ -325,6 +325,28 @@ The launcher has 7 built-in update targets and takes updates straight from the l
 - **Installing (launcher self-update)**: after extracting, the files are **merged over** the launcher folder (skipping `launcher.exe` / `data\` / `.old` at the top level, so user data is untouched) → the old exe is renamed and moved into a temporary folder → the new exe is swapped in atomically → the new version is started with `--self-restart <old pid>` and the old one exits (the new process waits for the old one to exit; `AllowSetForegroundWindow` keeps it in the foreground). Leftovers of an update (`launcher.exe.old`, `.__launcher_backup`, `.__update_launcher`) are cleaned up at start-up.
 - **Rules**: no updates while a game is running; when the launcher itself has an update, it must be updated before any other component ("Update all" follows this too). When a new version is found, the status bar shows "Update available" and a "Component updates available" dialog opens (with a way to the Settings page).
 
+## Game families
+
+The games are grouped into families that are launched the same way (`src/games/`):
+
+| Family | Games | Loader | Card | ServerBox |
+| --- | --- | --- | --- | --- |
+| `IdasLindbergh` | Initial D Arcade Stage 4 / 5 | kitten | INID PNG, picodaemon reader | yes |
+| `IdasRingEdge` | Initial D Arcade Stage 6 / 7 / 8 | mice | INID PNG, picodaemon reader | yes |
+| `Idac` | Initial D The Arcade | segatools (idachook) | Aime | no |
+| `Idz` | Initial D Arcade Stage Zero | segatools (idzhook) | Aime | no |
+
+`games::family_of` picks the family from the record's loader and game id. Each family implements `GameFamily`:
+
+- `check`: the settings this family needs, beyond the region, keychip and network that every game needs;
+- `prepare`: write the configs and copy the tools into the game folder;
+- `start`: start the helpers (card reader, amdaemon) and the game, and say what to end when it exits;
+- `launch_serverbox`: start the ServerBox, for the families that have one.
+
+`games::launch_game` runs these in order (sections 1.1–1.7 describe what each family does), and adds the ServerBox's static IP between `prepare` and `start` for families with a ServerBox. The interface only gathers a `LaunchInput` from the settings in effect and shows the result; a `LaunchProblem` names the page where the user can fix a missing setting.
+
+**Adding a game family**: write `src/games/<family>.rs` implementing `GameFamily`, and return it from `family_of`. Shared steps (card reader, graphics patch, ServerBox, `initialD.ini`) are in their own modules; the loader modules in `src/loaders/` only render config files.
+
 ## Interface languages
 
 The texts are compiled into the binary from `locales/<locale>.yml` by rust-i18n (`rust_i18n::i18n!` in `main.rs`; `build.rs` makes an edited locale file rebuild the crate). Code refers to a text by key: `t!("page_games.launch")`, or with values `t!("common.failed_to_copy", src = path.display(), error = e)`, whose `%{src}` / `%{error}` placeholders the locale files fill in. `en.yml` is the base; a key missing from another locale would show its English text.
@@ -407,11 +429,21 @@ cargo test              # 200+ unit tests (CRC reproduction / database lookup / 
 ├── src/
 │   ├── main.rs           # Entry point: UAC relaunch, --self-restart / --room-watchdog sub-modes, update leftover clean-up, runtime bootstrap
 │   ├── reactor_app.rs    # WinUI 3 main component (navigation / top bar / status bar / message dispatch) + the pages and dialogs under reactor_app/
-│   ├── launch.rs         # Loader scan, deployment orchestration, card reader / ServerBox start-up, netsh static IP, graphics patch deployment
-│   ├── kitten.rs         # kitten deployment: config.ini rendering + tool copying (with unit tests)
-│   ├── mice.rs           # mice deployment: config.ini / idas.ini rendering (game and ServerBox targets) + CIDR derivation (with unit tests)
-│   ├── segatools.rs      # segatools deployment: segatools.ini rendering (IDAC and IDZ forms), amdaemon / game command lines, spike
-│   ├── initiald.rs       # Byte-level private-server rewrite of initialD.ini (D4-D7, with unit tests)
+│   ├── games/            # The game families and how each is launched (see "Game families")
+│   │   ├── mod.rs        # GameFamily trait, LaunchInput, launch_game / launch_serverbox, family_of
+│   │   ├── idas_lindbergh.rs, idas_ringedge.rs, idac.rs, idz.rs   # one family each
+│   │   ├── idas.rs, alls.rs                # steps the IDAS / segatools families share
+│   │   ├── card_reader.rs  # picodaemon card reader: provisioning, idas.ini, start (with unit tests)
+│   │   ├── gfx_patch.rs    # winmm.dll + shaderfix graphics patch (with unit tests)
+│   │   ├── serverbox.rs    # ServerBox folder / record / graphics patch, netsh static IP (with unit tests)
+│   │   └── initiald.rs     # Byte-level private-server rewrite of initialD.ini (D4-D7, with unit tests)
+│   ├── loaders/          # The loaders and their config files
+│   │   ├── mod.rs        # Loader scan and resolution (settings path or next to the launcher)
+│   │   ├── kitten.rs     # kitten: config.ini rendering + tool copying (with unit tests)
+│   │   ├── mice.rs       # mice: config.ini / idas.ini rendering (game and ServerBox targets) + CIDR derivation (with unit tests)
+│   │   ├── segatools.rs  # segatools: segatools.ini rendering (IDAC and IDZ forms), amdaemon / game command lines, spike
+│   │   └── render_util.rs  # Shared config rendering helpers (Sections / tool file copying / dead zone conversion, with unit tests)
+│   ├── file_util.rs      # File copying helpers for deployment (with unit tests)
 │   ├── icf.rs            # ICF1 decryption (AES-128-CBC) + appid / version parsing (with unit tests)
 │   ├── db.rs             # Game database lookup (CRC index + game_id/version index, with unit tests)
 │   ├── detect.rs         # PE/ELF detection + CRC reproduction + picodaemon probing (with unit tests)
@@ -420,7 +452,6 @@ cargo test              # 200+ unit tests (CRC reproduction / database lookup / 
 │   ├── ini.rs            # Generic single-key INI read/write that keeps comments (with unit tests)
 │   ├── netinfo.rs        # Adapter and IPv4 subnet enumeration (GetAdaptersAddresses, with unit tests)
 │   ├── rawinput.rs       # HID device enumeration and button / axis / XInput capture
-│   ├── render_util.rs    # Shared config rendering helpers (Sections / tool file copying / dead zone conversion, with unit tests)
 │   ├── update.rs         # Component and launcher self-update (Release parsing / download / verification / installation, with unit tests)
 │   ├── awl.rs            # Anywherelan lifetime (create / join / invite / IP plan / firewall, with unit tests)
 │   ├── roomdir.rs        # Room directory REST client (with unit tests)
