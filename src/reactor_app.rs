@@ -24,8 +24,7 @@ use crate::rawinput;
 use crate::roomdir::RoomSummary;
 use crate::server::{self, ServerState};
 use crate::storage::{self, Library, Settings, VpnConfig};
-use crate::t;
-use crate::tf;
+use rust_i18n::t;
 use crate::update::{HttpAbort, UpdatePhase, UpdateState, UpdateStatus, UpdateTarget};
 use crate::vpn::{VpnHandle, VpnStatus};
 
@@ -417,12 +416,7 @@ impl Component for Launcher {
                         .unwrap_or(false);
                     if keychip_missing && !has_rejoin_memory && matches!(self.room_status, RoomStatus::Idle) {
                         self.dialog = Dialog::LaunchFailed {
-                            message: t!(
-                                "未配置 Keychip 序列号，无法使用店内对战。
-请先在「系统设置」页填写 Keychip 序列号。",
-                                "Keychip serial is not configured; In-Store Battles is unavailable.
-Fill in the Keychip serial on the System page first."
-                            ).to_string(),
+                            message: t!("app.keychip_serial_is_not_configured").to_string(),
                             goto: None,
                         };
                         self.nav_tag = "system".to_string();
@@ -447,14 +441,14 @@ Fill in the Keychip serial on the System page first."
                         &[
 
                             (
-                                t!("所有支持的格式", "All supported"),
+                                &t!("app.all_supported"),
                                 "*.exe;*.elf;ICF1",
                             ),
-                            (t!("游戏文件", "Executable"), "*.exe;*.elf"),
-                            (t!("ICF1 文件", "ICF1 file"), "ICF1"),
-                            (t!("所有文件", "All files"), "*.*"),
+                            (&t!("app.executable"), "*.exe;*.elf"),
+                            (&t!("app.icf1_file"), "ICF1"),
+                            (&t!("common.all_files"), "*.*"),
                         ],
-                        t!("选择游戏文件", "Select game file"),
+                        &t!("app.select_game_file"),
                     );
                     Message::FilePicked(picked)
                 });
@@ -496,10 +490,7 @@ Fill in the Keychip serial on the System page first."
                     self.cards.active = Some(name.clone());
                 } else {
                     self.dialog = Dialog::Error {
-                        message: t!(
-                            "保存卡片选择失败：游戏不存在",
-                            "Failed to save card selection: game no longer exists"
-                        )
+                        message: t!("app.failed_to_save_card_selection")
                         .to_string(),
                     };
                 }
@@ -511,8 +502,7 @@ Fill in the Keychip serial on the System page first."
                 }
                 let Some(dir) = self.aime_device_dir() else {
                     self.dialog = Dialog::Error {
-                        message: t!("未配置 amdaemon.exe，无法确定卡片目录",
-                            "amdaemon.exe is not configured; card directory unknown").to_string(),
+                        message: t!("app.amdaemon_exe_is_not_configured").to_string(),
                     };
                     return;
                 };
@@ -523,7 +513,7 @@ Fill in the Keychip serial on the System page first."
             Message::AimeCardCreated(Ok(code)) => self.reload_aime_cards(code),
             Message::AimeCardCreated(Err(e)) => {
                 self.dialog = Dialog::Error {
-                    message: tf!("新建车卡失败：{}", "Failed to create card: {}", e),
+                    message: t!("app.failed_to_create_card", error = e).to_string(),
                 };
             }
             Message::BlankCardSelect => {
@@ -537,10 +527,7 @@ Fill in the Keychip serial on the System page first."
                         self.cards.active = Some(name.clone());
                     } else {
                         self.dialog = Dialog::Error {
-                            message: t!(
-                                "保存卡片选择失败：游戏不存在",
-                                "Failed to save card selection: game no longer exists"
-                            )
+                            message: t!("app.failed_to_save_card_selection")
                             .to_string(),
                         };
                     }
@@ -614,7 +601,7 @@ Fill in the Keychip serial on the System page first."
     }
 
     fn view(&self, _input: &(), context: &mut ViewContext<Self>) -> View {
-        context.window_title(t!("Sasayaki Launcher", "Sasayaki Launcher"));
+        context.window_title(t!("app.window_title"));
 
         let dpi_image = self.dpi_image.clone();
         let sender = context.sender();
@@ -639,7 +626,7 @@ Fill in the Keychip serial on the System page first."
         context.on_window_size(context.callback(Message::WindowResized));
 
         let tag = self.nav_tag.clone();
-        let nav_item = |t: &'static str, label: &'static str, icon: Symbol| {
+        let nav_item = |t: &'static str, label: &str, icon: Symbol| {
             let selected = tag == t;
             KeyedView::new(
                 t,
@@ -647,20 +634,20 @@ Fill in the Keychip serial on the System page first."
                     .tag(t)
                     .is_selected(selected)
                     .slots([
-                        SlotView::new(NavigationViewItemSlot::Content, label),
+                        SlotView::new(NavigationViewItemSlot::Content, label.to_string()),
                         SlotView::new(NavigationViewItemSlot::Icon, SymbolIcon::new().symbol(icon)),
                     ]),
             )
         };
         let menu_items = vec![
-            nav_item("games", t!("游戏", "Games"), Symbol::Play),
-            nav_item("room", t!("店内对战", "In-Store Battles"), Symbol::Shop),
-            nav_item("graphics", t!("图形设置", "Graphics"), Symbol::Video),
-            nav_item("network", t!("网络设置", "Network"), Symbol::Globe),
-            nav_item("vpn", t!("VPN 设置", "VPN"), Symbol::Permissions),
-            nav_item("system", t!("系统设置", "System"), Symbol::Setting),
-            nav_item("input", t!("输入设置", "Input"), Symbol::Keyboard),
-            nav_item("settings", t!("设置", "Settings"), Symbol::Repair),
+            nav_item("games", &t!("nav.games"), Symbol::Play),
+            nav_item("room", &t!("nav.in_store_battles"), Symbol::Shop),
+            nav_item("graphics", &t!("nav.graphics"), Symbol::Video),
+            nav_item("network", &t!("nav.network"), Symbol::Globe),
+            nav_item("vpn", &t!("nav.vpn"), Symbol::Permissions),
+            nav_item("system", &t!("nav.system"), Symbol::Setting),
+            nav_item("input", &t!("nav.input"), Symbol::Keyboard),
+            nav_item("settings", &t!("nav.settings"), Symbol::Repair),
         ];
 
         let content: View = match self.nav_tag.as_str() {
@@ -685,7 +672,7 @@ Fill in the Keychip serial on the System page first."
             .is_back_button_visible(NavigationViewBackButtonVisible::Collapsed)
             .is_settings_visible(false)
             .always_show_header(false)
-            .pane_title(t!("Sasayaki 启动器", "Sasayaki Launcher"))
+            .pane_title(t!("common.app_name"))
             .on_selected_tag_changed(
                 context.callback(|opt: Option<String>| Message::NavChanged(opt)),
             )
@@ -903,11 +890,7 @@ impl Launcher {
 
                 if let Err(e) = result {
                     self.dialog = Dialog::Error {
-                        message: tf!(
-                            "删除网卡静态 IP 失败：{}",
-                            "Failed to remove static IP from adapter: {}",
-                            e
-                        ),
+                        message: t!("app.failed_to_remove_static_ip", error = e).to_string(),
                     };
                 }
             }
@@ -922,19 +905,19 @@ impl Launcher {
             Message::LogLevelSelected(Some(index)) => {
                 self.system.loglevel = SYS_LOGLEVELS
                     .get(index)
-                    .and_then(|(v, _, _)| v.map(String::from));
+                    .and_then(|(v, _)| v.map(String::from));
                 self.save_system();
             }
             Message::LogLevelSelected(None) => {}
 
             Message::LangSelected(Some(index)) => {
-                let new_lang = if index == 1 { Lang::En } else { Lang::Zh };
+                let Some(&new_lang) = Lang::ALL.get(index) else { return None };
                 if new_lang != self.lang {
                     self.lang = new_lang;
                     i18n::set_lang(new_lang);
                     if let Err(e) = self.store.save_lang(new_lang) {
                         self.dialog = Dialog::Error {
-                            message: format!("{}: {e}", t!("保存语言失败", "Failed to save language")),
+                            message: format!("{}: {e}", t!("app.failed_to_save_language")),
                         };
                     }
                 }
@@ -954,7 +937,7 @@ impl Launcher {
             }
             Message::SaveDebounceTick(token) => self.flush_pending_saves(token),
             Message::SeatSelected(Some(index)) => {
-                if let Some((v, _, _)) = SYS_SEATS.get(index) {
+                if let Some((v, _)) = SYS_SEATS.get(index) {
                     self.system.seat = Some(v.to_string());
 
                     if *v == "SINGLE" {
@@ -1112,11 +1095,9 @@ impl Launcher {
                 if epoch != self.input_capture_gen {
                     return None;
                 }
-                if let Some((zh, en)) = capture_label(slot) {
+                if let Some(label) = capture_label(slot) {
                     self.dialog = Dialog::Error {
-                        message: tf!("捕获「{}」超时，未检测到按键", "Capture of \"{}\" timed out; no key detected",
-                            i18n::pick(zh, en)
-                        ),
+                        message: t!("common.capture_timed_out", button = t!(label)).to_string(),
                     };
                 }
                 self.end_capture();
@@ -1132,8 +1113,8 @@ impl Launcher {
             Message::VpnImportClicked => {
                 context.spawn_background(|_| {
                     let picked = filedialog::pick_open_file(
-                        &[(t!("OpenVPN 配置", "OpenVPN config"), "*.ovpn"), (t!("所有文件", "All files"), "*.*")],
-                        t!("选择 VPN 配置文件", "Select VPN config file"),
+                        &[(&t!("app.openvpn_config"), "*.ovpn"), (&t!("common.all_files"), "*.*")],
+                        &t!("app.select_vpn_config_file"),
                     );
                     Message::VpnConfigPicked(picked)
                 });
@@ -1150,7 +1131,7 @@ impl Launcher {
                 self.vpn.config_path = Some(path.display().to_string());
                 if let Err(e) = self.store.save_vpn(&self.vpn) {
                     self.dialog = Dialog::Error {
-                        message: tf!("保存 config.ini 失败：{}", "Failed to save config.ini: {}", e),
+                        message: t!("common.failed_to_save_config_ini", error = e).to_string(),
                     };
                 }
                 self.vpn_status = VpnStatus::Disconnected;
@@ -1188,18 +1169,14 @@ impl Launcher {
 
                     if self.vpn_auto_retries < VPN_AUTO_RETRIES {
                         self.dialog = Dialog::Error {
-                            message: tf!("自动重连失败（{}/{}）：{}\n将继续重试…",
-                                "Auto-reconnect failed ({}/{}): {}\nRetrying...",
-                                self.vpn_auto_retries, VPN_AUTO_RETRIES, err),
+                            message: t!("app.auto_reconnect_failed", attempt = self.vpn_auto_retries, max_attempts = VPN_AUTO_RETRIES, error = err).to_string(),
                         };
                         self.spawn_vpn_connect_task(context);
                     } else {
                         self.vpn_auto_retries = 0;
                         self.vpn_status = VpnStatus::Failed;
                         self.dialog = Dialog::Error {
-                            message: tf!("VPN 自动重连失败（已重试 {} 次）：{}\n请检查网络后手动重连",
-                                "VPN auto-reconnect failed after {} attempts: {}\nPlease reconnect manually",
-                                VPN_AUTO_RETRIES, err),
+                            message: t!("app.vpn_auto_reconnect_failed_after", max_attempts = VPN_AUTO_RETRIES, error = err).to_string(),
                         };
                     }
                 } else {
@@ -1221,17 +1198,14 @@ impl Launcher {
                     self.vpn_auto_retries += 1;
                     self.vpn_status = VpnStatus::Connecting;
                     self.dialog = Dialog::Error {
-                        message: tf!("VPN 已断开（{reason}），正在自动重连（{}/{}）…",
-                            "VPN disconnected ({reason}), reconnecting ({}/{})...",
-                            self.vpn_auto_retries, VPN_AUTO_RETRIES),
+                        message: t!("app.vpn_reconnecting", reason = reason, attempt = self.vpn_auto_retries, max_attempts = VPN_AUTO_RETRIES).to_string(),
                     };
                     self.spawn_vpn_connect_task(context);
                 } else {
                     self.vpn_auto_retries = 0;
                     self.vpn_status = VpnStatus::Failed;
                     self.dialog = Dialog::Error {
-                        message: tf!("VPN 已断开（{reason}），自动重连失败，请手动重连",
-                            "VPN disconnected ({reason}); auto-reconnect failed, please reconnect manually"),
+                        message: t!("app.vpn_reconnect_failed", reason = reason).to_string(),
                     };
                 }
             }
@@ -1487,7 +1461,7 @@ impl Launcher {
         if pending & Self::SAVE_VPN != 0 {
             if let Err(e) = self.store.save_vpn(&self.vpn) {
                 self.dialog = Dialog::Error {
-                    message: tf!("保存 config.ini 失败：{}", "Failed to save config.ini: {}", e),
+                    message: t!("common.failed_to_save_config_ini", error = e).to_string(),
                 };
             }
         }
@@ -1515,7 +1489,7 @@ impl Launcher {
                     .columns([GridLength::Star(1.0), GridLength::Auto])
                     .children((
                         TextBlock::new()
-                            .text(t!("Sasayaki 启动器", "Sasayaki Launcher"))
+                            .text(t!("common.app_name"))
                             .font_size(16.0)
                             .font_weight(FontWeight::SEMI_BOLD)
                             .vertical_alignment(VerticalAlignment::Center)
@@ -1533,7 +1507,7 @@ impl Launcher {
                                     .vertical_alignment(VerticalAlignment::Center)
                                     .children((
                                         TextBlock::new()
-                                            .text(t!("访问DNET网站", "Visit DNET website"))
+                                            .text(t!("app.visit_dnet_website"))
                                             .font_size(14.0)
                                             .vertical_alignment(VerticalAlignment::Center)
                                             .opacity(0.8),
@@ -1550,7 +1524,7 @@ impl Launcher {
                                 Button::new()
                                     .style(ButtonStyle::Accent)
                                     .on_click(context.message(Message::AddClicked))
-                                    .content(t!("＋ 添加游戏", "Add Game")),
+                                    .content(t!("app.add_game").to_string()),
                             )),
                     )),
             )
@@ -1597,29 +1571,29 @@ impl Launcher {
             if error {
                 (
                     Color::argb(255, 0xFF, 0x99, 0xA4),
-                    t!("更新错误", "Update error"),
+                    t!("app.update_error"),
                 )
             } else if checking {
                 (
                     Color::argb(255, 0xFF, 0xB0, 0x4D),
-                    t!("检查更新…", "Checking…"),
+                    t!("app.checking"),
                 )
             } else if outdated {
                 (
                     Color::argb(255, 0xFF, 0xB0, 0x4D),
-                    t!("有更新", "Update available"),
+                    t!("common.update_available"),
                 )
             } else if up_to_date {
 
                 (
                     Color::argb(255, 0x6C, 0xCB, 0x5F),
-                    t!("已最新", "Up to date"),
+                    t!("app.up_to_date"),
                 )
             } else {
 
                 (
                     Color::argb(255, 0x9E, 0x9E, 0x9E),
-                    t!("未检查", "Not checked"),
+                    t!("app.not_checked"),
                 )
             }
         };
@@ -1659,21 +1633,21 @@ impl Launcher {
                     .orientation(Orientation::Horizontal)
                     .spacing(20.0)
                     .children((
-                        item(t!("服务器", "Server"), srv_color),
+                        item(&t!("app.server"), srv_color),
                         item("VPN", vpn_color),
                         {
                             let (room_color, room_label) = match &self.room_status {
-                                RoomStatus::Idle => (Color::argb(255, 0x9E, 0x9E, 0x9E), t!("房间", "Room")),
+                                RoomStatus::Idle => (Color::argb(255, 0x9E, 0x9E, 0x9E), t!("app.room")),
                                 RoomStatus::Creating { .. } | RoomStatus::Joining { .. } => {
-                                    (Color::argb(255, 0x9E, 0x9E, 0x9E), t!("房间连接中…", "Room connecting…"))
+                                    (Color::argb(255, 0x9E, 0x9E, 0x9E), t!("app.room_connecting"))
                                 }
                                 RoomStatus::Hosting { .. } | RoomStatus::Joined { .. } => {
-                                    (Color::argb(255, 0x6C, 0xCB, 0x5F), t!("房间", "Room"))
+                                    (Color::argb(255, 0x6C, 0xCB, 0x5F), t!("app.room"))
                                 }
                             };
-                            item(room_label, room_color)
+                            item(&room_label, room_color)
                         },
-                        item(upd_label, upd_color),
+                        item(&upd_label, upd_color),
                     )),
             )
     }

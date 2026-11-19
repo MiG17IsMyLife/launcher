@@ -1,7 +1,8 @@
 use std::fs;
 use std::path::Path;
 
-use crate::tf;
+use rust_i18n::t;
+
 use crate::render_util::{bool_str, copy_tool_files, deadzone_value, push_xi_button, Sections, split_resolution};
 use crate::storage::{
     CoinConfig, DPAD_CODE_BASE, GraphicsConfig, InputConfig, INPUT_RATIO_DEFAULT, NetworkConfig,
@@ -383,21 +384,17 @@ pub fn deploy(
     target: MiceTarget,
 ) -> Result<(), String> {
     if !dir.is_dir() {
-        return Err(tf!("目标目录不存在：{}", "Target directory does not exist: {}", dir.display()));
+        return Err(t!("mice.target_directory_does_not_exist", dir = dir.display()).to_string());
     }
     if !tool_dir.is_dir() {
-        return Err(tf!("mice 工具目录不存在：{}", "mice tool directory does not exist: {}", tool_dir.display()));
+        return Err(t!("mice.mice_tool_directory_does_not", tool_dir = tool_dir.display()).to_string());
     }
 
     copy_tool_files(tool_dir, dir, EXCLUDE_FILES, "mice")?;
 
     let cfg_dir = dir.join("mice");
     fs::create_dir_all(&cfg_dir).map_err(|e| {
-        tf!(
-            "创建 mice 配置目录失败（{}）：{e}",
-            "Failed to create mice config directory ({}): {e}",
-            cfg_dir.display()
-        )
+        t!("mice.failed_to_create_mice_config", cfg_dir = cfg_dir.display(), error = e).to_string()
     })?;
     write_atomic(&cfg_dir.join("config.ini"), &render_config(dep, target))?;
     write_atomic(&cfg_dir.join("idas.ini"), &render_idas(dep))?;
@@ -410,19 +407,11 @@ pub(crate) fn write_atomic(target: &Path, text: &str) -> Result<(), String> {
     }
     let tmp = target.with_extension("ini.tmp");
     fs::write(&tmp, text).map_err(|e| {
-        tf!(
-            "写入临时配置失败（{}）：{e}",
-            "Failed to write temporary config ({}): {e}",
-            tmp.display()
-        )
+        t!("mice.failed_to_write_temporary_config", tmp = tmp.display(), error = e).to_string()
     })?;
     fs::rename(&tmp, target).map_err(|e| {
         let _ = fs::remove_file(&tmp);
-        tf!(
-            "替换配置失败（{}）：{e}",
-            "Failed to replace config ({}): {e}",
-            target.display()
-        )
+        t!("mice.failed_to_replace_config", target = target.display(), error = e).to_string()
     })
 }
 
@@ -907,11 +896,12 @@ mod tests {
         fs::write(tool.join("mice.exe"), "x").unwrap();
 
         let err = mice_deploy(&game, &tool, &snapshot()).unwrap_err();
-        assert!(err.contains("目标目录不存在"), "{err}");
+        assert_eq!(err, t!("mice.target_directory_does_not_exist", dir = game.display()));
 
         fs::create_dir_all(&game).unwrap();
-        let err = mice_deploy(&game, &tmp.0.join("nope"), &snapshot()).unwrap_err();
-        assert!(err.contains("工具目录不存在"), "{err}");
+        let missing_tool = tmp.0.join("nope");
+        let err = mice_deploy(&game, &missing_tool, &snapshot()).unwrap_err();
+        assert_eq!(err, t!("mice.mice_tool_directory_does_not", tool_dir = missing_tool.display()));
     }
 
     fn mice_deploy(

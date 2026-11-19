@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 
 use crate::db::{self, DbMatch};
 use crate::storage::Loader;
-use crate::t;
+use rust_i18n::t;
 
 const PE_DOS_MAGIC: u16 = 0x5A4D;
 const PE_SIGNATURE: u32 = 0x0000_4550;
@@ -87,7 +87,7 @@ pub fn identify(path: &Path) -> io::Result<IdentifyResult> {
         }
         FileKind::Unknown => Err(io::Error::new(
             io::ErrorKind::InvalidData,
-            t!("文件不是可识别的 PE (exe) 或 32 位 ELF 格式", "File is not a recognizable PE (exe) or 32-bit ELF"),
+            t!("detect.file_is_not_recognizable_pe"),
         )),
     }
 }
@@ -134,7 +134,7 @@ fn pe_text_crc(file: &mut File) -> io::Result<u32> {
     }
     Err(io::Error::new(
         io::ErrorKind::InvalidData,
-        t!("PE 文件中未找到 .text 段", "No .text section found in the PE file"),
+        t!("detect.no_text_section_found_in"),
     ))
 }
 
@@ -157,7 +157,7 @@ fn elf_crc(file: &mut File) -> io::Result<u32> {
     if segs.is_empty() {
         return Err(io::Error::new(
             io::ErrorKind::InvalidData,
-            t!("ELF 中没有 PT_LOAD 段", "No PT_LOAD segment found in the ELF"),
+            t!("detect.no_pt_load_segment_found"),
         ));
     }
     segs.sort_unstable_by_key(|s| s.0);

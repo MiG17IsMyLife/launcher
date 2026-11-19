@@ -2,6 +2,8 @@ use std::fs;
 use std::io::{Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
 
+use rust_i18n::t;
+
 #[derive(Clone, Debug)]
 pub struct CardEntry {
     pub path: PathBuf,
@@ -160,7 +162,7 @@ pub fn create_aime_card_in(device_dir: &Path) -> std::io::Result<String> {
     }
     Err(std::io::Error::new(
         std::io::ErrorKind::AlreadyExists,
-        "无法生成不重复的 access code",
+        t!("cards.no_unique_access_code").to_string(),
     ))
 }
 

@@ -3,6 +3,10 @@ use winresource::VersionInfo;
 fn main() {
     windows_reactor_setup::as_framework_dependent();
 
+    // rust-i18n's i18n! macro compiles locales/*.yml into the binary, but the compiler does
+    // not know it read them; this makes an edited text rebuild the crate.
+    println!("cargo:rerun-if-changed=locales");
+
     if std::env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("windows") {
         // The resource version is taken from APP_VERSION in src/main.rs (the same constant
         // the UI shows), so the two can never disagree.

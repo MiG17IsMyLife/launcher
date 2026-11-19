@@ -1,13 +1,14 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
+use rust_i18n::t;
+
 use crate::mice::{format_ipv4, parse_cidr, write_atomic, RoomNetOverride};
 use crate::render_util::{deadzone_value, push_xi_button, Sections};
 use crate::storage::{
     CoinConfig, DPAD_CODE_BASE, GraphicsConfig, InputConfig, INPUT_RATIO_DEFAULT, NetworkConfig,
     SystemConfig,
 };
-use crate::tf;
 
 #[derive(Clone)]
 pub struct DeploySnapshot {
@@ -567,23 +568,15 @@ fn copy_if_changed(src: &Path, dest: &Path) -> Result<(), String> {
     }
     fs::copy(src, dest)
         .map(|_| ())
-        .map_err(|e| tf!("复制 {} 失败：{e}", "Failed to copy {}: {e}", src.display()))
+        .map_err(|e| t!("common.failed_to_copy", src = src.display(), error = e).to_string())
 }
 
 pub fn deploy(dir: &Path, tool_dir: &Path, dep: &DeploySnapshot) -> Result<(), String> {
     if !dir.is_dir() {
-        return Err(tf!(
-            "amdaemon 目录不存在：{}",
-            "amdaemon directory does not exist: {}",
-            dir.display()
-        ));
+        return Err(t!("segatools.amdaemon_directory_does_not_exist", dir = dir.display()).to_string());
     }
     if !tool_dir.is_dir() {
-        return Err(tf!(
-            "segatools 工具目录不存在：{}",
-            "segatools tool directory does not exist: {}",
-            tool_dir.display()
-        ));
+        return Err(t!("segatools.segatools_tool_directory_does_not", tool_dir = tool_dir.display()).to_string());
     }
     let kind = game_kind(dep.game_id.as_deref());
 
@@ -604,7 +597,7 @@ pub fn deploy(dir: &Path, tool_dir: &Path, dep: &DeploySnapshot) -> Result<(), S
     };
 
     let entries = fs::read_dir(tool_dir)
-        .map_err(|e| tf!("读取工具目录失败（{}）：{e}", "Failed to read tool directory ({}): {e}", tool_dir.display()))?;
+        .map_err(|e| t!("segatools.failed_to_read_tool_directory", tool_dir = tool_dir.display(), error = e).to_string())?;
     for e in entries.flatten() {
         let Ok(ft) = e.file_type() else { continue };
         if !ft.is_file() {
@@ -634,11 +627,7 @@ pub fn deploy(dir: &Path, tool_dir: &Path, dep: &DeploySnapshot) -> Result<(), S
     if kind == GameKind::Idac {
         let hook_json = sub_dir.join("config_hook.json");
         if !hook_json.is_file() {
-            return Err(tf!(
-                "segatools 工具目录缺少 idac\\config_hook.json（{}）",
-                "segatools tool directory is missing idac\\config_hook.json ({})",
-                hook_json.display()
-            ));
+            return Err(t!("segatools.segatools_tool_directory_is_missing", hook_json = hook_json.display()).to_string());
         }
         copy_if_changed(&hook_json, &dir.join("config_hook.json"))?;
     }
@@ -661,11 +650,7 @@ pub fn deploy(dir: &Path, tool_dir: &Path, dep: &DeploySnapshot) -> Result<(), S
         let d = dir.join(sub);
         if !d.is_dir() {
             fs::create_dir_all(&d).map_err(|e| {
-                tf!(
-                    "创建 {sub} 目录失败（{}）：{e}",
-                    "Failed to create {sub} directory ({}): {e}",
-                    d.display()
-                )
+                t!("segatools.failed_to_create_directory", sub = sub, d = d.display(), error = e).to_string()
             })?;
         }
     }

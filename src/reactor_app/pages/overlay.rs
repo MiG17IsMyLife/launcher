@@ -3,7 +3,7 @@ use std::sync::Arc;
 
 use windows_reactor::*;
 
-use crate::t;
+use rust_i18n::t;
 
 use crate::reactor_app::Launcher;
 use crate::reactor_app::message::Message;
@@ -92,7 +92,7 @@ impl Launcher {
 
         let status_row: View = if running {
             TextBlock::new()
-                .text(t!("游戏运行中…", "Game running…"))
+                .text(t!("page_overlay.game_running"))
                 .font_size(14.0)
                 .opacity(0.65)
                 .horizontal_alignment(HorizontalAlignment::Center)
@@ -109,7 +109,7 @@ impl Launcher {
                         .width(18.0)
                         .height(18.0),
                     TextBlock::new()
-                        .text(t!("正在启动游戏…", "Starting game…"))
+                        .text(t!("page_overlay.starting_game"))
                         .font_size(14.0)
                         .opacity(0.65)
                         .vertical_alignment(VerticalAlignment::Center),
@@ -152,7 +152,7 @@ impl Launcher {
             .min_height(36.0)
             .horizontal_alignment(HorizontalAlignment::Center)
             .on_click(context.message(Message::LaunchStop(index)))
-            .content(t!("关闭游戏", "Close game"));
+            .content(t!("page_overlay.close_game").to_string());
 
         let panel_fill = if self.light_theme {
             Color::argb(0xE8, 0xF3, 0xF3, 0xF3)

@@ -1,6 +1,8 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
+use rust_i18n::t;
+
 const INI_NAME: &str = "initialD.ini";
 
 const NEWS_PORT: u16 = 8086;
@@ -47,10 +49,10 @@ pub fn patch_game_ini(game_dir: &Path, game_id: Option<&str>, host: &str) -> Res
 
     let tmp = path.with_extension("ini.tmp");
     fs::write(&tmp, &out)
-        .map_err(|e| format!("写入 initialD.ini 临时文件失败（{}）：{e}", tmp.display()))?;
+        .map_err(|e| t!("initiald.write_temp_failed", path = tmp.display(), error = e).to_string())?;
     fs::rename(&tmp, &path).map_err(|e| {
         let _ = fs::remove_file(&tmp);
-        format!("替换 initialD.ini 失败（{}）：{e}", path.display())
+        t!("initiald.replace_failed", path = path.display(), error = e).to_string()
     })?;
     Ok(true)
 }

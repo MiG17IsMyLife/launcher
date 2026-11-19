@@ -10,8 +10,7 @@ use crate::launch;
 use crate::mice;
 use crate::segatools;
 use crate::storage::GameRecord;
-use crate::t;
-use crate::tf;
+use rust_i18n::t;
 use crate::storage::Loader;
 
 use crate::reactor_app::Launcher;
@@ -162,8 +161,7 @@ impl Launcher {
             if region_missing {
                 return Message::LaunchDone {
                     index,
-                    result: Err(t!("未设置地区，请在该游戏行的下拉配置中选择地区",
-                                   "Region is not set; select it in this game's dropdown").to_string()),
+                    result: Err(t!("page_launch.region_is_not_set").to_string()),
                     goto: Some(("games".to_string(), Some(index))),
                 };
             }
@@ -171,8 +169,7 @@ impl Launcher {
             if dep.as_ref().and_then(|d| d.keychip()).is_none() {
                 return Message::LaunchDone {
                     index,
-                    result: Err(t!("未设置 Keychip 序列号，请先在设置页填写后重试",
-                                   "Keychip serial is not set; please fill it in the settings page and retry").to_string()),
+                    result: Err(t!("page_launch.keychip_serial_is_not_set").to_string()),
                     goto: Some(("system".to_string(), None)),
                 };
             }
@@ -180,8 +177,7 @@ impl Launcher {
             if !net_configured {
                 return Message::LaunchDone {
                     index,
-                    result: Err(t!("未配置网络网段，请先在「网络设置」页选择网卡与网段",
-                                   "Network subnet is not configured; select an adapter and subnet on the Network page first").to_string()),
+                    result: Err(t!("page_launch.network_subnet_is_not_configured").to_string()),
                     goto: Some(("network".to_string(), None)),
                 };
             }
@@ -198,10 +194,7 @@ impl Launcher {
                     {
                         return Message::LaunchDone {
                             index,
-                            result: Err(t!(
-                                "该游戏不支持 DirectInput 的 H 排挡，请改为序列排挡或切换为 XInput 后重试",
-                                "This game does not support DirectInput H-pattern shifter; switch to sequential or use XInput and retry"
-                            )
+                            result: Err(t!("page_launch.this_game_does_not_support")
                             .to_string()),
                             goto: Some(("input".to_string(), None)),
                         };
@@ -209,16 +202,14 @@ impl Launcher {
                     if card_missing {
                         return Message::LaunchDone {
                             index,
-                            result: Err(t!("未设置车卡，请先进入「卡片选择」页选用一张卡片",
-                                           "No card selected; open Card select and pick a card first").to_string()),
+                            result: Err(t!("page_launch.no_card_selected").to_string()),
                             goto: Some(("cards".to_string(), Some(index))),
                         };
                     }
                     if no_file(&rec.serverbox) {
                         return Message::LaunchDone {
                             index,
-                            result: Err(t!("未配置 ServerBox，请在该游戏行的 ServerBox 行点击「添加」",
-                                           "ServerBox is not configured; click Add on this game's ServerBox row").to_string()),
+                            result: Err(t!("page_launch.serverbox_is_not_configured").to_string()),
                             goto: Some(("games".to_string(), Some(index))),
                         };
                     }
@@ -228,24 +219,21 @@ impl Launcher {
                     if card_missing {
                         return Message::LaunchDone {
                             index,
-                            result: Err(t!("未设置车卡，请先进入「卡片选择」页选用一张卡片",
-                                           "No card selected; open Card select and pick a card first").to_string()),
+                            result: Err(t!("page_launch.no_card_selected").to_string()),
                             goto: Some(("cards".to_string(), Some(index))),
                         };
                     }
                     if no_file(&rec.amdaemon) {
                         return Message::LaunchDone {
                             index,
-                            result: Err(t!("未设置 amdaemon.exe，请在该游戏行的下拉配置中选择",
-                                           "amdaemon.exe is not configured; select it in this game's dropdown").to_string()),
+                            result: Err(t!("page_launch.amdaemon_exe_is_not_configured").to_string()),
                             goto: Some(("games".to_string(), Some(index))),
                         };
                     }
                     if no_file(&rec.game_exe) {
                         return Message::LaunchDone {
                             index,
-                            result: Err(t!("未设置游戏主程序（GameProject-Win64-Shipping.exe），请在该游戏行的下拉配置中选择",
-                                           "Game executable (GameProject-Win64-Shipping.exe) is not configured; select it in this game's dropdown").to_string()),
+                            result: Err(t!("page_launch.game_executable").to_string()),
                             goto: Some(("games".to_string(), Some(index))),
                         };
                     }
@@ -265,7 +253,7 @@ impl Launcher {
                     Err(e) => {
                         return Message::LaunchDone {
                             index,
-                            result: Err(tf!("读卡器准备失败：{}", "Card reader prep failed: {}", e)),
+                            result: Err(t!("page_launch.card_reader_prep_failed", error = e).to_string()),
                             goto: None,
                         };
                     }
@@ -274,7 +262,7 @@ impl Launcher {
                     if let Err(e) = launch::ensure_cg_libs(&game_dir) {
                         return Message::LaunchDone {
                             index,
-                            result: Err(tf!("图形库准备失败：{}", "Graphics lib prep failed: {}", e)),
+                            result: Err(t!("page_launch.graphics_lib_prep_failed", error = e).to_string()),
                             goto: None,
                         };
                     }
@@ -297,7 +285,7 @@ impl Launcher {
                     Err(e) => {
                         return Message::LaunchDone {
                             index,
-                            result: Err(tf!("读卡器部署失败：{}", "Card reader deploy failed: {}", e)),
+                            result: Err(t!("page_launch.card_reader_deploy_failed", error = e).to_string()),
                             goto: None,
                         };
                     }
@@ -311,7 +299,7 @@ impl Launcher {
                 Err(e) => {
                     return Message::LaunchDone {
                         index,
-                        result: Err(tf!("游戏启动失败：{}", "Game launch failed: {}", e)),
+                        result: Err(t!("page_launch.game_launch_failed", error = e).to_string()),
                         goto: None,
                     };
                 }
@@ -337,7 +325,7 @@ impl Launcher {
                             if let Err(e) = launch::add_serverbox_static_ip(adapter, ip, &mask) {
                                 return Message::LaunchDone {
                                     index,
-                                    result: Err(tf!("为网卡添加 ServerBox 静态 IP 失败：{}", "Failed to add ServerBox static IP to adapter: {}", e)),
+                                    result: Err(t!("page_launch.failed_to_add_serverbox_static", error = e).to_string()),
                                     goto: None,
                                 };
                             }
@@ -361,7 +349,7 @@ impl Launcher {
                         rollback_static_ip(&added_static_ip);
                         return Message::LaunchDone {
                             index,
-                            result: Err(tf!("读卡器启动失败：{}", "Failed to start card reader ({}): {e}", e)),
+                            result: Err(t!("page_launch.failed_to_start_card_reader", error = e).to_string()),
                             goto: None,
                         };
                     }
@@ -379,7 +367,7 @@ impl Launcher {
                         rollback_static_ip(&added_static_ip);
                         return Message::LaunchDone {
                             index,
-                            result: Err(tf!("amdaemon 启动失败：{}", "Failed to start amdaemon: {}", e)),
+                            result: Err(t!("page_launch.failed_to_start_amdaemon", error = e).to_string()),
                             goto: None,
                         };
                     }
@@ -395,7 +383,7 @@ impl Launcher {
                     rollback_static_ip(&added_static_ip);
                     return Message::LaunchDone {
                         index,
-                        result: Err(tf!("游戏启动失败：{}", "Game launch failed: {}", e)),
+                        result: Err(t!("page_launch.game_launch_failed", error = e).to_string()),
                         goto: None,
                     };
                 }
@@ -457,8 +445,7 @@ impl Launcher {
 
         if matches!(rec.loader, Loader::Segatools) {
             self.dialog = Dialog::Error {
-                message: t!("segatools 加载器暂不支持 ServerBox",
-                    "The segatools loader does not support ServerBox yet").to_string(),
+                message: t!("common.segatools_has_no_serverbox").to_string(),
             };
             return;
         }
@@ -471,16 +458,14 @@ impl Launcher {
 
             if !net_configured {
                 return Message::ServerBoxLaunched {
-                    result: Err(t!("未配置网络网段，请先在「网络设置」页选择网卡与网段",
-                                   "Network subnet is not configured; select an adapter and subnet on the Network page first").to_string()),
+                    result: Err(t!("page_launch.network_subnet_is_not_configured").to_string()),
                     runtime: None,
                     goto: Some(("network".to_string(), None)),
                 };
             }
             if dep.as_ref().and_then(|d| d.keychip()).is_none() {
                 return Message::ServerBoxLaunched {
-                    result: Err(t!("未设置 Keychip 序列号，请先在设置页填写后重试",
-                                   "Keychip serial is not set; please fill it in the settings page and retry").to_string()),
+                    result: Err(t!("page_launch.keychip_serial_is_not_set").to_string()),
                     runtime: None,
                     goto: Some(("system".to_string(), None)),
                 };
@@ -492,7 +477,7 @@ impl Launcher {
                         child: Arc::new(Mutex::new(child)),
                     }
                 })
-                .map_err(|e| tf!("ServerBox 启动失败：{}", "ServerBox launch failed: {}", e));
+                .map_err(|e| t!("page_launch.serverbox_launch_failed", error = e).to_string());
             let runtime = launched.as_ref().ok().cloned();
             Message::ServerBoxLaunched {
                 result: launched.map(|_| ()),

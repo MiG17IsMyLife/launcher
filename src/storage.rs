@@ -818,15 +818,13 @@ impl Store {
         save_system_to(&self.config_path(), cfg)
     }
 
+    /// The interface language chosen in `config.ini [ui] lang`, or the system's language
+    /// when none (or an unknown one) is stored.
     pub fn load_lang(&self) -> Lang {
-        let raw = ini::read_value(&self.config_path(), "ui", "lang");
-        let lang = i18n::from_ini_value(raw.as_deref());
-        if lang == Lang::Zh && raw.is_none() {
-
-            i18n::detect_system()
-        } else {
-            lang
-        }
+        ini::read_value(&self.config_path(), "ui", "lang")
+            .as_deref()
+            .and_then(Lang::from_ini_value)
+            .unwrap_or_else(i18n::detect_system)
     }
 
     pub fn save_lang(&self, lang: Lang) -> io::Result<()> {
@@ -834,7 +832,7 @@ impl Store {
         if !path.exists() {
             fs::write(&path, "; Sasayaki Launcher settings\n")?;
         }
-        ini::set_value(&path, "ui", "lang", i18n::to_ini_value(lang))
+        ini::set_value(&path, "ui", "lang", lang.ini_value())
     }
 
     pub fn load_card(&self) -> Option<String> {

@@ -1,27 +1,27 @@
 use windows_reactor::*;
 
-use crate::i18n;
-use crate::t;
-use crate::tf;
+use rust_i18n::t;
 
 use crate::reactor_app::Launcher;
 use crate::reactor_app::message::{Dialog, Message};
 use crate::reactor_app::widgets::{separator, settings_row, settings_toggle, spawn_anim_tick};
 
-pub(in crate::reactor_app) const SYS_LOGLEVELS: &[(Option<&str>, &str, &str)] = &[
-    (Some("info"), "info（默认）", "info (default)"),
-    (Some("error"), "error", "error"),
-    (Some("warn"), "warn", "warn"),
-    (Some("debug"), "debug", "debug"),
-    (Some("trace"), "trace", "trace"),
+/// The log levels offered: the value stored in config.ini and the text key of its label.
+pub(in crate::reactor_app) const SYS_LOGLEVELS: &[(Option<&str>, &str)] = &[
+    (Some("info"), "page_system.log_level_info"),
+    (Some("error"), "page_system.log_level_error"),
+    (Some("warn"), "page_system.log_level_warn"),
+    (Some("debug"), "page_system.log_level_debug"),
+    (Some("trace"), "page_system.log_level_trace"),
 ];
 
-pub(in crate::reactor_app) const SYS_SEATS: &[(&str, &str, &str)] = &[
-    ("SINGLE", "单机", "Single"),
-    ("A1", "A1", "A1"),
-    ("A2", "A2", "A2"),
-    ("B1", "B1", "B1"),
-    ("B2", "B2", "B2"),
+/// The cabinet seats: the value stored in config.ini and the text key of its label.
+pub(in crate::reactor_app) const SYS_SEATS: &[(&str, &str)] = &[
+    ("SINGLE", "page_system.seat_single"),
+    ("A1", "page_system.seat_a1"),
+    ("A2", "page_system.seat_a2"),
+    ("B1", "page_system.seat_b1"),
+    ("B2", "page_system.seat_b2"),
 ];
 
 impl Launcher {
@@ -29,7 +29,7 @@ impl Launcher {
     pub(in crate::reactor_app) fn save_system(&mut self) {
         if let Err(e) = self.store.save_system(&self.system) {
             self.dialog = Dialog::Error {
-                message: tf!("保存 config.ini 失败：{}", "Failed to save config.ini: {}", e),
+                message: t!("common.failed_to_save_config_ini", error = e).to_string(),
             };
         }
     }
@@ -37,7 +37,7 @@ impl Launcher {
     pub(in crate::reactor_app) fn save_coin(&mut self) {
         if let Err(e) = self.store.save_coin(&self.coin) {
             self.dialog = Dialog::Error {
-                message: tf!("保存 config.ini 失败：{}", "Failed to save config.ini: {}", e),
+                message: t!("common.failed_to_save_config_ini", error = e).to_string(),
             };
         }
     }
@@ -73,20 +73,20 @@ impl Launcher {
 
         let loglevel_items: Vec<String> = SYS_LOGLEVELS
             .iter()
-            .map(|(_, zh, en)| i18n::pick(zh, en).to_string())
+            .map(|&(_, label)| t!(label).to_string())
             .collect();
         let loglevel_idx = SYS_LOGLEVELS
             .iter()
-            .position(|(v, _, _)| *v == self.system.loglevel.as_deref())
+            .position(|(v, _)| *v == self.system.loglevel.as_deref())
             .or(Some(0));
 
         let seat_items: Vec<String> = SYS_SEATS
             .iter()
-            .map(|(_, zh, en)| i18n::pick(zh, en).to_string())
+            .map(|&(_, label)| t!(label).to_string())
             .collect();
         let seat_idx = SYS_SEATS
             .iter()
-            .position(|(v, _, _)| Some(*v) == self.system.seat.as_deref())
+            .position(|(v, _)| Some(*v) == self.system.seat.as_deref())
             .or(Some(0));
 
         let card = Border::new()
@@ -102,7 +102,7 @@ impl Launcher {
                     .children((
                     settings_row(
                         SymbolIcon::new().symbol(Symbol::List).into(),
-                        t!("日志级别", "Log level"),
+                        &t!("page_system.log_level"),
                         ComboBox::new()
                             .width(180.0)
                             .items_source(loglevel_items)
@@ -126,7 +126,7 @@ impl Launcher {
                     separator(),
                     settings_row(
                         SymbolIcon::new().symbol(Symbol::Contact).into(),
-                        t!("跳过读卡器初始化", "Skip reader initialization"),
+                        &t!("page_system.skip_reader_initialization"),
                         settings_toggle(
                             self.system.skip_reader_init == Some(true),
                             true,
@@ -136,7 +136,7 @@ impl Launcher {
                     separator(),
                     settings_row(
                         SymbolIcon::new().symbol(Symbol::Import).into(),
-                        t!("自动插卡", "Auto card insert"),
+                        &t!("page_system.auto_card_insert"),
                         settings_toggle(
                             self.system.auto_insert_card == Some(true),
                             true,
@@ -146,7 +146,7 @@ impl Launcher {
                     separator(),
                     settings_row(
                         SymbolIcon::new().symbol(Symbol::Directions).into(),
-                        t!("机位设置", "Seat position"),
+                        &t!("page_system.seat_position"),
                         StackPanel::new()
                             .orientation(Orientation::Horizontal)
                             .spacing(12.0)
@@ -162,7 +162,7 @@ impl Launcher {
                                     .on_is_checked_changed(
                                         context.callback(Message::SeatMasterToggled),
                                     )
-                                    .content(t!("主机", "Master")),
+                                    .content(t!("page_system.master").to_string()),
                                 ComboBox::new()
                                     .width(140.0)
                                     .items_source(seat_items)
@@ -205,7 +205,7 @@ impl Launcher {
                     .children((
                         SymbolIcon::new().symbol(Symbol::Manage),
                         StackPanel::new().children([TextBlock::new()
-                            .text(t!("投币设置", "Coins"))
+                            .text(t!("page_system.coins"))
                             .font_size(14.0)
                             .font_weight(FontWeight::SEMI_BOLD)]),
                     )),
@@ -243,7 +243,7 @@ impl Launcher {
                     "coin-freeplay",
                     settings_row(
                         SymbolIcon::new().symbol(Symbol::Like).into(),
-                        t!("免费游玩", "Free play"),
+                        &t!("page_system.free_play"),
                         settings_toggle(
                             coin.freeplay == Some(true),
                             true,
@@ -257,7 +257,7 @@ impl Launcher {
                     coin_number_row(
                         0,
                         Symbol::Play,
-                        t!("开始游戏币数", "Start credits"),
+                        &t!("page_system.start_credits"),
                         coin.start_coin,
                     ),
                 ),
@@ -267,7 +267,7 @@ impl Launcher {
                     coin_number_row(
                         1,
                         Symbol::Redo,
-                        t!("续关币数", "Continue credits"),
+                        &t!("page_system.continue_credits"),
                         coin.continue_coin,
                     ),
                 ),
@@ -277,7 +277,7 @@ impl Launcher {
                     coin_number_row(
                         2,
                         Symbol::Shop,
-                        t!("购买车卡币数", "Card purchase credits"),
+                        &t!("page_system.card_purchase_credits"),
                         coin.card_coin,
                     ),
                 ),
@@ -287,7 +287,7 @@ impl Launcher {
                     coin_number_row(
                         3,
                         Symbol::Directions,
-                        t!("购买车辆币数", "Car purchase credits"),
+                        &t!("page_system.car_purchase_credits"),
                         coin.car_coin,
                     ),
                 ),
@@ -318,7 +318,7 @@ impl Launcher {
                     .children((
                         StackPanel::new()
                             .children([TextBlock::new()
-                                .text(t!("系统设置", "System"))
+                                .text(t!("nav.system"))
                                 .font_size(26.0)
                                 .font_weight(FontWeight::SEMI_BOLD)]),
                         card,

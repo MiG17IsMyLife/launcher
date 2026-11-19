@@ -6,7 +6,7 @@ kitten runs **D4/D5** (Lindbergh ELF), mice runs **D6/D7/D8** (RingEdge exe), an
 - **Stack**: Rust + **windows-reactor** (Microsoft's official declarative WinUI 3 framework), giving a genuine native Windows 11 interface.
 - **Native look**: Mica backdrop, Fluent controls, light/dark theme following the system; a 1180×720 client area, with an embedded icon and version resource (`build.rs` reads `APP_VERSION` from `main.rs`).
 - **Game identification**: the user adds a game file by hand (`.exe` / `.elf` / **`ICF1`**). An exe/elf is looked up in the game database by its **CRC** (the algorithm reproduces the mice/kitten sources byte for byte). IDAC/IDZ have no CRC entries; their **ICF1 file** is decrypted to get the appid and version, which are then looked up.
-- **Chinese and English**: every user-facing string goes through the bilingual `t!` / `tf!` macros. The interface language is switched on the Settings page (`config.ini [ui] lang`; when unset, it follows the system language).
+- **Chinese, English and Japanese**: every user-facing text lives in `locales/zh-CN.yml` / `en.yml` / `ja.yml` and is looked up by key with rust-i18n's `t!` macro (see "Interface languages"). The language is switched on the Settings page (`config.ini [ui] lang`; when unset, it follows the system language).
 
 > **Prerequisites**: the launcher is **framework-dependent**: the target machine needs the **Windows App SDK runtime** (2.x family). When it is missing or too old, a system error box is shown at start-up. The launcher checks its privileges and, **when not elevated, relaunches itself through `runas` (UAC)**: changing adapters with netsh and the awl/openvpn virtual adapters all need administrator rights.
 
@@ -249,7 +249,7 @@ The ServerBox is **no longer started together with the game**. It is started on 
 - **xinput**: controller (slot 0~3), dual-stick mode (off by default, affects `singleStickSteering`), linear steering (on by default), left and right stick dead zones (0~100%, default 20%), **12 button mapping slots** (shift up / shift down / the four directions / start / view / coin / card / accelerator / brake). After "Capture", the button pressed on the controller within 10 seconds is recorded by name (defaults RB/LB/D-pad/A/B/X/Y/RT/LT; duplicates are highlighted in red as conflicts).
 - **dinput**: wheel / pedal / shifter device drop-downs (told apart by device path when several interfaces share a name); throttle/brake **axis capture** (+ an "invert axis" checkbox); shifter type (sequential / H); button capture (shift up/down, the four directions, start / view / coin / card, gears 1~6, reverse; the D-pad is recorded as pseudo codes ≥1000, which are skipped when writing the ini); duplicates are highlighted in red as conflicts.
 
-**Settings page**: launcher version (`APP_VERSION`), language (Chinese / English), server address (empty means the default `sdgt.arcadehub.xyz`; used for kitten redirect / mice naominet / segatools dns / initialD.ini), room nickname (at most 24 characters, default `player1234`), automatic update check switch, a "Check now" button, and the **component update table** (see "Automatic updates").
+**Settings page**: launcher version (`APP_VERSION`), language (中文 / English / 日本語, each in its own language), server address (empty means the default `sdgt.arcadehub.xyz`; used for kitten redirect / mice naominet / segatools dns / initialD.ini), room nickname (at most 24 characters, default `player1234`), automatic update check switch, a "Check now" button, and the **component update table** (see "Automatic updates").
 
 **Status bar at the bottom**: four status lights, server (probing TCP 443/80 of the address on the Settings page every 15 seconds) / VPN / room / update.
 
@@ -317,13 +317,25 @@ The launcher has 7 built-in update targets and takes updates straight from the l
 | shaderfix-idas | `shaderfix.zip` | Gitea `gitea.tendokyu.moe/puniru/shaderfix-idas` |
 | awl | `awl*.zip` | GitHub / GitCode `project-sasayaki/awl` |
 
-- **Checking**: once at start-up, then every hour (controlled by the "Check for updates automatically" switch); "Check now" bypasses the cache. For targets with two sources, the interface language picks one (Chinese → GitCode, English → GitHub). Results are cached for 24 hours in `data\update_cache.json` (with a `schema` version, so a change of the parsing rules invalidates it automatically).
+- **Checking**: once at start-up, then every hour (controlled by the "Check for updates automatically" switch); "Check now" bypasses the cache. For targets with two sources, the interface language picks one (Chinese → GitCode, any other language → GitHub). Results are cached for 24 hours in `data\update_cache.json` (with a `schema` version, so a change of the parsing rules invalidates it automatically).
 - **Picking the "latest" Release**: the single-object endpoint `/releases/latest` is preferred; an array endpoint is reordered by "`release_status == "latest"` → latest `created_at` → last in the array" and the first is taken (GitCode returns releases oldest first, so taking the first one directly would give the oldest). When the latest one has no matching asset, the next older one in the same order is used. Pinning `.../releases/tag/v1.4.2` is provided by the built-in sources; the code supports pinning a tag as well.
 - **Versions**: always the Release tag without `v` (e.g. `1.4.2`), compared numerically part by part (`1.10` > `1.9`). The local baseline is `last_<component>_version` in `data\settings.json` (written back after a successful install); **the launcher's baseline is the compile-time `APP_VERSION` constant**.
 - **Download and verification**: WinHTTP streams to disk (a `.part` temporary file) with live progress (download / extract / install, cancellable). When a GitHub asset carries a `digest` (`sha256:...`), it is verified after the download.
 - **Installing (tools components)**: extract to `tools\.__update_<component>\` → strip a single top-level folder → rename the old folder as a backup → move the new one in → delete the backup; rolled back automatically on failure. The loader paths are scanned again after installing.
 - **Installing (launcher self-update)**: after extracting, the files are **merged over** the launcher folder (skipping `launcher.exe` / `data\` / `.old` at the top level, so user data is untouched) → the old exe is renamed and moved into a temporary folder → the new exe is swapped in atomically → the new version is started with `--self-restart <old pid>` and the old one exits (the new process waits for the old one to exit; `AllowSetForegroundWindow` keeps it in the foreground). Leftovers of an update (`launcher.exe.old`, `.__launcher_backup`, `.__update_launcher`) are cleaned up at start-up.
 - **Rules**: no updates while a game is running; when the launcher itself has an update, it must be updated before any other component ("Update all" follows this too). When a new version is found, the status bar shows "Update available" and a "Component updates available" dialog opens (with a way to the Settings page).
+
+## Interface languages
+
+The texts are compiled into the binary from `locales/<locale>.yml` by rust-i18n (`rust_i18n::i18n!` in `main.rs`; `build.rs` makes an edited locale file rebuild the crate). Code refers to a text by key: `t!("page_games.launch")`, or with values `t!("common.failed_to_copy", src = path.display(), error = e)`, whose `%{src}` / `%{error}` placeholders the locale files fill in. `en.yml` is the base; a key missing from another locale would show its English text.
+
+- Keys are grouped by where they are used (`page_games`, `launch`, `update`, …); texts several places share are in `common`, the navigation entries in `nav`, and the errors of the HTTP client in `http`.
+- Tables whose entries carry a label (the input bindings, the log levels, the seats) hold the label's key and translate it where it is shown.
+- `config.ini [ui] lang` stores `zh-CN` / `en-US` / `ja-JP`. With no (or an unknown) value the Windows locale decides: `zh-*` → Chinese, `ja-*` → Japanese, anything else → English.
+
+`cargo test` checks the catalog: every locale has exactly the keys of `en.yml` with the same placeholders, every `t!` call in the sources names an existing key and passes exactly the placeholders of its text, and every text is used somewhere.
+
+**Adding or changing a text**: add the key to all three locale files (in the same section), then use it. **Adding a language**: add `locales/<locale>.yml`, a `Lang` variant with its locale, native name and `config.ini` value in `i18n.rs`, and its case in `Lang::from_locale_name`.
 
 ## Data storage (portable, no installation)
 
@@ -415,9 +427,10 @@ cargo test              # 200+ unit tests (CRC reproduction / database lookup / 
 │   ├── room_sync.rs      # Room member state sync TCP protocol (host and member sides, with unit tests)
 │   ├── vpn.rs            # OpenVPN management (driver fallback / log diagnosis / Job Object, with unit tests)
 │   ├── server.rs         # Server probing thread
-│   ├── i18n.rs           # Chinese and English (t!/tf! macros, with unit tests)
+│   ├── i18n.rs           # Interface languages: the choice, config.ini value, system default; catalog consistency tests
 │   ├── filedialog.rs     # Native file dialog
 │   ├── win_util.rs       # Small helpers: wide strings / CREATE_NO_WINDOW / DPAPI, …
 │   └── assets/           # Embedded resources: card base images (id4/id5/id6/id8/aime), game cover logos, launcher.ico
+├── locales/              # Interface texts per language (zh-CN.yml / en.yml / ja.yml, embedded at build time)
 └── games_db.json         # Game database (hand-maintained, embedded at build time)
 ```

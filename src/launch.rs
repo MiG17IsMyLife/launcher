@@ -9,8 +9,7 @@ use crate::kitten;
 use crate::mice;
 use crate::segatools;
 use crate::storage::{GameRecord, GraphicsConfig, Loader, Settings, launcher_dir};
-use crate::t;
-use crate::tf;
+use rust_i18n::t;
 
 #[derive(Clone, Debug, Default)]
 pub struct LoaderPaths {
@@ -42,8 +41,7 @@ impl DeployConfig {
     }
 
     fn mismatch_error() -> String {
-        t!("游戏启动缺少配置快照或快照与加载器不匹配（内部错误）",
-           "Game launch is missing the config snapshot or the snapshot does not match the loader (internal error)").to_string()
+        t!("launch.game_launch_is_missing_config").to_string()
     }
 
     pub fn keychip(&self) -> Option<&str> {
@@ -119,9 +117,9 @@ pub fn resolve_loader(
     match record.loader {
         Loader::Kitten => {
             let p = pick(&settings.kitten_path, &detected.kitten)
-                .ok_or_else(|| t!("未找到 kitten.exe，请将加载器放入启动器子目录（如 launcher\\tools\\kitten\\kitten.exe），或在设置中指定路径", "kitten.exe not found. Put the loader under the launcher subdirectory (e.g. launcher\\tools\\kitten\\kitten.exe), or specify its path in settings").to_string())?;
+                .ok_or_else(|| t!("launch.kitten_exe_not_found").to_string())?;
             if !exists(&p) {
-                return Err(tf!("kitten 加载器不存在：{}", "kitten loader does not exist: {}", p.display()));
+                return Err(t!("launch.kitten_loader_does_not_exist", path = p.display()).to_string());
             }
             Ok(p)
         }
@@ -134,17 +132,17 @@ pub fn resolve_loader(
                 pick(&settings.mice_path, &detected.mice)
                     .or_else(|| pick(&settings.mice64_path, &detected.mice64))
             };
-            let p = preferred.ok_or_else(|| t!("未找到 mice.exe/mice64.exe，请将加载器放入启动器子目录（如 launcher\\mice\\mice.exe），或在设置中指定路径", "mice.exe/mice64.exe not found. Put the loader under the launcher subdirectory (e.g. launcher\\mice\\mice.exe), or specify its path in settings").to_string())?;
+            let p = preferred.ok_or_else(|| t!("launch.mice_exe_mice64_exe_not").to_string())?;
             if !exists(&p) {
-                return Err(tf!("mice 加载器不存在：{}", "mice loader does not exist: {}", p.display()));
+                return Err(t!("launch.mice_loader_does_not_exist", path = p.display()).to_string());
             }
             Ok(p)
         }
         Loader::Segatools => {
             let p = pick(&settings.segatools_path, &detected.inject)
-                .ok_or_else(|| t!("未找到 inject.exe，请将 segatools 工具放入启动器子目录（如 launcher\\tools\\segatools\\inject.exe），或在设置中指定路径", "inject.exe not found. Put the segatools tool under the launcher subdirectory (e.g. launcher\\tools\\segatools\\inject.exe), or specify its path in settings").to_string())?;
+                .ok_or_else(|| t!("launch.inject_exe_not_found").to_string())?;
             if !exists(&p) {
-                return Err(tf!("inject.exe 不存在：{}", "inject.exe does not exist: {}", p.display()));
+                return Err(t!("launch.inject_exe_does_not_exist", path = p.display()).to_string());
             }
             Ok(p)
         }
@@ -164,7 +162,7 @@ pub fn deploy_only(
                 return Err(DeployConfig::mismatch_error());
             };
             let tool_dir = loader.parent().ok_or_else(|| {
-                tf!("无法确定 kitten 工具目录：{}", "Cannot determine the kitten tool directory: {}", loader.display())
+                t!("launch.cannot_determine_kitten_tool_directory", loader = loader.display()).to_string()
             })?;
             kitten::deploy(record, tool_dir, dep)
         }
@@ -173,7 +171,7 @@ pub fn deploy_only(
                 return Err(DeployConfig::mismatch_error());
             };
             let tool_dir = loader.parent().ok_or_else(|| {
-                tf!("无法确定 mice 工具目录：{}", "Cannot determine the mice tool directory: {}", loader.display())
+                t!("launch.cannot_determine_mice_tool_directory", loader = loader.display()).to_string()
             })?;
             let game_dir = game_dir_of(record);
             mice::deploy(&game_dir, tool_dir, dep, mice::MiceTarget::Game)?;
@@ -188,23 +186,19 @@ pub fn deploy_only(
                 .amdaemon
                 .as_deref()
                 .map(PathBuf::from)
-                .ok_or_else(|| t!("该游戏未设置 amdaemon.exe，请在游戏行的下拉配置中选择", "This game has no amdaemon.exe configured; select it in the game row's dropdown").to_string())?;
+                .ok_or_else(|| t!("launch.this_game_has_no_amdaemon").to_string())?;
             if !amdaemon.is_file() {
-                return Err(tf!("amdaemon.exe 不存在：{}", "amdaemon.exe does not exist: {}", amdaemon.display()));
+                return Err(t!("launch.amdaemon_exe_does_not_exist", amdaemon = amdaemon.display()).to_string());
             }
             let game_dir = amdaemon
                 .parent()
                 .map(PathBuf::from)
-                .ok_or_else(|| tf!("无法确定 amdaemon 目录：{}", "Cannot determine the amdaemon directory: {}", amdaemon.display()))?;
+                .ok_or_else(|| t!("launch.cannot_determine_amdaemon_directory", amdaemon = amdaemon.display()).to_string())?;
             segatools::deploy(&game_dir, &loader.parent().unwrap_or(Path::new(".")), dep)?;
 
             let local_inject = game_dir.join("inject.exe");
             if !local_inject.is_file() {
-                return Err(tf!(
-                    "部署后未在游戏目录找到 inject.exe（{}），请检查 segatools 工具目录是否完整",
-                    "inject.exe not found in the game directory after deployment ({}); check that the segatools tool directory is complete",
-                    local_inject.display()
-                ));
+                return Err(t!("launch.inject_exe_not_found_in", local_inject = local_inject.display()).to_string());
             }
             Ok(local_inject)
         }
@@ -229,13 +223,9 @@ pub fn add_serverbox_static_ip(friendly: &str, ip: &str, mask: &str) -> Result<(
             "dhcpstaticipcoexistence=enabled",
         ])
         .output()
-        .map_err(|e| tf!("执行 netsh 失败：{}", "Failed to run netsh: {}", e))?;
+        .map_err(|e| t!("launch.failed_to_run_netsh", error = e).to_string())?;
     if !set_if.status.success() {
-        return Err(tf!(
-            "开启网卡 DHCP 静态共存失败：{}",
-            "Failed to enable DHCP static IP coexistence: {}",
-            String::from_utf8_lossy(&set_if.stderr)
-        )
+        return Err(t!("launch.failed_to_enable_dhcp_static", output = String::from_utf8_lossy(&set_if.stderr)).to_string()
         .trim()
         .to_string());
     }
@@ -251,7 +241,7 @@ pub fn add_serverbox_static_ip(friendly: &str, ip: &str, mask: &str) -> Result<(
             mask,
         ])
         .output()
-        .map_err(|e| tf!("执行 netsh 失败：{}", "Failed to run netsh: {}", e))?;
+        .map_err(|e| t!("launch.failed_to_run_netsh", error = e).to_string())?;
 
     let combined = format!(
         "{}{}",
@@ -264,11 +254,7 @@ pub fn add_serverbox_static_ip(friendly: &str, ip: &str, mask: &str) -> Result<(
     {
         Ok(())
     } else {
-        Err(tf!(
-            "为网卡添加静态 IP 失败：{}",
-            "Failed to add static IP to adapter: {}",
-            combined.trim()
-        )
+        Err(t!("launch.failed_to_add_static_ip", output = combined.trim()).to_string()
         .trim()
         .to_string())
     }
@@ -285,7 +271,7 @@ pub fn remove_serverbox_static_ip(friendly: &str, ip: &str) -> Result<(), String
             ip,
         ])
         .output()
-        .map_err(|e| tf!("执行 netsh 失败：{}", "Failed to run netsh: {}", e))?;
+        .map_err(|e| t!("launch.failed_to_run_netsh", error = e).to_string())?;
     if del.status.success() {
         return Ok(());
     }
@@ -300,11 +286,7 @@ pub fn remove_serverbox_static_ip(friendly: &str, ip: &str) -> Result<(), String
     {
         return Ok(());
     }
-    Err(tf!(
-        "从网卡删除静态 IP 失败：{}",
-        "Failed to remove static IP from adapter: {}",
-        combined.trim()
-    )
+    Err(t!("launch.failed_to_remove_static_ip", output = combined.trim()).to_string()
     .trim()
     .to_string())
 }
@@ -331,9 +313,9 @@ fn serverbox_record(record: &GameRecord) -> Result<GameRecord, String> {
     let sb_path = record
         .serverbox
         .as_deref()
-        .ok_or_else(|| t!("该游戏未配置 ServerBox", "This game has no ServerBox configured").to_string())?;
+        .ok_or_else(|| t!("launch.this_game_has_no_serverbox").to_string())?;
     if !Path::new(sb_path).is_file() {
-        return Err(tf!("ServerBox 文件不存在：{sb_path}", "ServerBox file does not exist: {sb_path}"));
+        return Err(t!("launch.serverbox_file_does_not_exist", sb_path = sb_path).to_string());
     }
     let mut sb_rec = record.clone();
     sb_rec.path = sb_path.to_string();
@@ -358,11 +340,7 @@ pub fn deploy_serverbox(
         if enabled {
             let tools = crate::update::tools_dir();
             if find_asi_loader(&tools).is_none() {
-                return Err(tf!(
-                    "未安装 Ultimate-ASI-Loader 组件（{}），无法部署图形补丁；请先在设置页更新该组件",
-                    "Ultimate-ASI-Loader is not installed ({}); install it from the Settings page first",
-                    tools.join("asi-loader").join("dinput8.dll").display()
-                ));
+                return Err(t!("launch.ultimate_asi_loader_is_not", path = tools.join("asi-loader").join("dinput8.dll").display()).to_string());
             }
         }
         deploy_gfx_patch(&sb_dir, enabled)?;
@@ -375,14 +353,13 @@ pub fn deploy_serverbox(
             };
             let loader = resolve_loader(&sb_rec, settings, detected)?;
             let tool_dir = loader.parent().ok_or_else(|| {
-                tf!("无法确定 mice 工具目录：{}", "Cannot determine the mice tool directory: {}", loader.display())
+                t!("launch.cannot_determine_mice_tool_directory", loader = loader.display()).to_string()
             })?;
             mice::deploy(&sb_dir, tool_dir, snapshot, mice::MiceTarget::ServerBox)?;
             Ok(None)
         }
         Loader::Kitten => deploy_only(&sb_rec, settings, detected, dep).map(Some),
-        Loader::Segatools => Err(t!("segatools 加载器暂不支持 ServerBox",
-            "The segatools loader does not support ServerBox yet").to_string()),
+        Loader::Segatools => Err(t!("common.segatools_has_no_serverbox").to_string()),
     }
 }
 
@@ -404,8 +381,7 @@ pub fn launch_serverbox(
             sb_exe.ok_or_else(|| DeployConfig::mismatch_error())?
         }
         Loader::Segatools => {
-            return Err(t!("segatools 加载器暂不支持 ServerBox",
-                "The segatools loader does not support ServerBox yet").to_string())
+            return Err(t!("common.segatools_has_no_serverbox").to_string())
         }
     };
     spawn_game(&sb_rec, &exe).map_err(|e| format!("ServerBox {e}"))
@@ -423,7 +399,7 @@ pub fn deploy_reader(
 ) -> Result<PathBuf, String> {
     let reader = Path::new(reader_path);
     if !reader.is_file() {
-        return Err(tf!("读卡器文件不存在：{reader_path}", "Card reader file does not exist: {reader_path}"));
+        return Err(t!("launch.card_reader_file_does_not", reader_path = reader_path).to_string());
     }
     let reader_dir = reader
         .parent()
@@ -436,14 +412,14 @@ pub fn deploy_reader(
         .map(PathBuf::from)
         .or_else(|| detected.mice.clone())
         .ok_or_else(|| {
-            t!("未找到 mice.exe，请将 mice 工具放入启动器子目录（如 launcher\\tools\\mice\\mice.exe），或在设置中指定路径", "mice.exe not found. Put the mice tool under the launcher subdirectory (e.g. launcher\\tools\\mice\\mice.exe), or specify its path in settings").to_string()
+            t!("launch.mice_exe_not_found").to_string()
         })?;
     if !mice.is_file() {
-        return Err(tf!("mice 加载器不存在：{}", "mice loader does not exist: {}", mice.display()));
+        return Err(t!("launch.mice_loader_does_not_exist", path = mice.display()).to_string());
     }
     let tool_dir = mice
         .parent()
-        .ok_or_else(|| tf!("无法确定 mice 工具目录：{}", "Cannot determine the mice tool directory: {}", mice.display()))?;
+        .ok_or_else(|| t!("launch.cannot_determine_mice_tool_directory", loader = mice.display()).to_string())?;
 
     for name in ["mice.exe", "mice.dll"] {
         let src = tool_dir.join(name);
@@ -473,7 +449,7 @@ pub fn deploy_reader(
     if !ini_text.is_empty() {
         let mice_dir = reader_dir.join("mice");
         fs::create_dir_all(&mice_dir).map_err(|e| {
-            tf!("创建读卡器配置目录失败（{}）：{e}", "Failed to create card reader config directory ({}): {e}", mice_dir.display())
+            t!("launch.failed_to_create_card_reader", mice_dir = mice_dir.display(), error = e).to_string()
         })?;
         let ini = mice_dir.join("idas.ini");
         crate::mice::write_atomic(&ini, &ini_text)?;
@@ -496,7 +472,7 @@ pub fn spawn_reader(reader_path: &str, mice_exe: &Path) -> Result<std::process::
     cmd.current_dir(&reader_dir);
     cmd.arg("-p").arg("-b").arg(&reader_file);
     cmd.spawn()
-        .map_err(|e| tf!("启动读卡器失败（{}）：{e}", "Failed to start card reader ({}): {e}", mice_exe.display()))
+        .map_err(|e| t!("launch.failed_to_start_card_reader", mice_exe = mice_exe.display(), error = e).to_string())
 }
 
 pub fn ensure_picodaemon(game_dir: &Path) -> Result<PathBuf, String> {
@@ -522,11 +498,7 @@ fn ensure_picodaemon_from(game_dir: &Path, dep: &Path) -> Result<PathBuf, String
     }
 
     if !src.is_file() {
-        return Err(tf!(
-            "未找到 picodaemon.exe：{}\n（请将 picodaemon.exe 放入 tools/dependency/，随启动器打包附上）",
-            "picodaemon.exe not found: {}\n(Put a picodaemon.exe under tools/dependency/ and ship it with the launcher)",
-            src.display()
-        ));
+        return Err(t!("launch.picodaemon_exe_not_found", src = src.display()).to_string());
     }
     copy_file_if_changed(&src, &candidate)?;
     Ok(candidate)
@@ -536,11 +508,7 @@ fn ensure_cg_libs_from(game_dir: &Path, dep: &Path) -> Result<(), String> {
     for name in ["cg.dll", "cgGL.dll"] {
         let src = dep.join(name);
         if !src.is_file() {
-            return Err(tf!(
-                "未找到 {}：{}\n（请将 {} 放入 tools/dependency/，随启动器打包附上）",
-                "{} not found: {}\n(Put {} under tools/dependency/ and ship it with the launcher)",
-                name, src.display(), name
-            ));
+            return Err(t!("launch.dependency_not_found", name = name, src = src.display()).to_string());
         }
         copy_file_if_changed(&src, &game_dir.join(name))?;
     }
@@ -568,7 +536,7 @@ fn copy_file_if_changed(src: &Path, dest: &Path) -> Result<(), String> {
     }
     fs::copy(src, dest)
         .map(|_| ())
-        .map_err(|e| tf!("复制 {} 失败：{e}", "Failed to copy {}: {e}", src.display()))
+        .map_err(|e| t!("common.failed_to_copy", src = src.display(), error = e).to_string())
 }
 
 pub fn deploy_gfx_patch(dir: &Path, enabled: bool) -> Result<(), String> {
@@ -624,20 +592,16 @@ fn find_file_recursive(dir: &Path, name: &str) -> Option<PathBuf> {
 
 fn copy_files_flat(src: &Path, dest: &Path) -> Result<(), String> {
     fs::create_dir_all(dest).map_err(|e| {
-        tf!(
-            "创建目录失败（{}）：{e}",
-            "Failed to create directory ({}): {e}",
-            dest.display()
-        )
+        t!("launch.failed_to_create_directory", dest = dest.display(), error = e).to_string()
     })?;
     for entry in fs::read_dir(src).map_err(|e| {
-        tf!("读取目录失败（{}）：{e}", "Failed to read directory ({}): {e}", src.display())
+        t!("launch.failed_to_read_directory", src = src.display(), error = e).to_string()
     })? {
         let e = entry.map_err(|e| {
-            tf!("读取目录条目失败（{}）：{e}", "Failed to read directory entry ({}): {e}", src.display())
+            t!("launch.failed_to_read_directory_entry", src = src.display(), error = e).to_string()
         })?;
         let ft = e.file_type().map_err(|e| {
-            tf!("读取文件类型失败：{e}", "Failed to read file type: {e}")
+            t!("launch.failed_to_read_file_type", error = e).to_string()
         })?;
         if ft.is_dir() {
             copy_files_flat(&e.path(), dest)?;
@@ -693,15 +657,14 @@ fn amdaemon_of(record: &GameRecord) -> Result<(PathBuf, PathBuf), String> {
         .amdaemon
         .as_deref()
         .map(PathBuf::from)
-        .ok_or_else(|| t!("该游戏未设置 amdaemon.exe，请在游戏行的下拉配置中选择",
-            "This game has no amdaemon.exe configured; select it in the game row's dropdown").to_string())?;
+        .ok_or_else(|| t!("launch.this_game_has_no_amdaemon").to_string())?;
     if !amdaemon.is_file() {
-        return Err(tf!("amdaemon.exe 不存在：{}", "amdaemon.exe does not exist: {}", amdaemon.display()));
+        return Err(t!("launch.amdaemon_exe_does_not_exist", amdaemon = amdaemon.display()).to_string());
     }
     let dir = amdaemon
         .parent()
         .map(PathBuf::from)
-        .ok_or_else(|| tf!("无法确定 amdaemon 目录：{}", "Cannot determine the amdaemon directory: {}", amdaemon.display()))?;
+        .ok_or_else(|| t!("launch.cannot_determine_amdaemon_directory", amdaemon = amdaemon.display()).to_string())?;
     Ok((amdaemon, dir))
 }
 
@@ -710,10 +673,9 @@ fn game_exe_of(record: &GameRecord) -> Result<PathBuf, String> {
         .game_exe
         .as_deref()
         .map(PathBuf::from)
-        .ok_or_else(|| t!("该游戏未设置游戏主程序（GameProject-Win64-Shipping.exe），请在游戏行的下拉配置中选择",
-            "This game has no game executable (GameProject-Win64-Shipping.exe) configured; select it in the game row's dropdown").to_string())?;
+        .ok_or_else(|| t!("launch.this_game_has_no_game").to_string())?;
     if !exe.is_file() {
-        return Err(tf!("游戏主程序不存在：{}", "Game executable does not exist: {}", exe.display()));
+        return Err(t!("launch.game_executable_does_not_exist", exe = exe.display()).to_string());
     }
     Ok(exe)
 }
@@ -737,7 +699,7 @@ pub fn spawn_amdaemon(
     cmd.args(segatools::amdaemon_args(kind, snap.game_id.as_deref()));
 
     cmd.spawn()
-        .map_err(|e| tf!("启动 amdaemon 失败（{}）：{e}", "Failed to start amdaemon ({}): {e}", inject.display()))
+        .map_err(|e| t!("launch.failed_to_start_amdaemon", inject = inject.display(), error = e).to_string())
 }
 
 fn spawn_idac_game(
@@ -759,7 +721,7 @@ fn spawn_idac_game(
     cmd.args(segatools::game_args(kind, &game_exe, culture, &user_dir));
     cmd.creation_flags(crate::win_util::CREATE_NO_WINDOW);
     cmd.spawn()
-        .map_err(|e| tf!("启动游戏失败（{}）：{e}", "Failed to start game ({}): {e}", game_exe.display()))
+        .map_err(|e| t!("launch.failed_to_start_game", game_exe = game_exe.display(), error = e).to_string())
 }
 
 fn initiald_patch(record: &GameRecord, game_dir: &Path, host: &str) -> Result<bool, String> {
@@ -782,14 +744,14 @@ fn initiald_patch(record: &GameRecord, game_dir: &Path, host: &str) -> Result<bo
 pub fn spawn_game(record: &GameRecord, loader: &Path) -> Result<std::process::Child, String> {
     let game = PathBuf::from(&record.path);
     if !game.is_file() {
-        return Err(tf!("游戏文件不存在：{}", "Game file does not exist: {}", game.display()));
+        return Err(t!("common.game_file_does_not_exist", game = game.display()).to_string());
     }
     let game_dir = game
         .parent()
         .map(|p| p.to_path_buf())
         .unwrap_or_else(|| launcher_dir());
     if !game_dir.is_dir() {
-        return Err(tf!("游戏目录不存在：{}", "Game directory does not exist: {}", game_dir.display()));
+        return Err(t!("common.game_directory_does_not_exist", game_dir = game_dir.display()).to_string());
     }
 
     let mut cmd = Command::new(loader);
@@ -807,8 +769,7 @@ pub fn spawn_game(record: &GameRecord, loader: &Path) -> Result<std::process::Ch
         }
         Loader::Segatools => {
 
-            return Err(t!("segatools 游戏暂不支持 ServerBox / 该启动路径",
-                "The segatools loader does not support ServerBox / this launch path yet").to_string());
+            return Err(t!("launch.segatools_cannot_launch_this_way").to_string());
         }
     }
 
@@ -816,7 +777,7 @@ pub fn spawn_game(record: &GameRecord, loader: &Path) -> Result<std::process::Ch
         cmd.arg("-t");
     }
     cmd.spawn()
-        .map_err(|e| tf!("启动加载器失败（{}）：{e}", "Failed to start loader ({}): {e}", loader.display()))
+        .map_err(|e| t!("launch.failed_to_start_loader", loader = loader.display(), error = e).to_string())
 }
 
 #[cfg(test)]

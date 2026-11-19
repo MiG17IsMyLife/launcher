@@ -6,8 +6,7 @@ use std::time::Duration;
 use windows_reactor::*;
 
 use crate::cards::{self, CardEntry, CardScan};
-use crate::t;
-use crate::tf;
+use rust_i18n::t;
 use crate::storage::Loader;
 
 use crate::reactor_app::Launcher;
@@ -90,10 +89,10 @@ impl Launcher {
             None
         });
         let Some(gi) = self.cards_game else {
-            return placeholder_page(t!("卡片选择", "Card select"), t!("请先在「游戏」页单击一个游戏进入卡片选择。", "Go to the Games page and click a game to open card selection."));
+            return placeholder_page(&t!("common.card_select"), &t!("page_cards.go_to_games_page_and"));
         };
         let Some(game) = self.library.games.get(gi) else {
-            return placeholder_page(t!("卡片选择", "Card select"), t!("游戏不存在。", "The game no longer exists."));
+            return placeholder_page(&t!("common.card_select"), &t!("page_cards.game_no_longer_exists"));
         };
         let _ = game;
         let aime_mode = self.cards_aime;
@@ -129,7 +128,7 @@ impl Launcher {
                         .height(40.0)
                         .horizontal_alignment(HorizontalAlignment::Center),
                     TextBlock::new()
-                        .text(t!("正在加载卡片…", "Loading cards…"))
+                        .text(t!("page_cards.loading_cards"))
                         .font_size(14.0)
                         .opacity(0.7)
                         .horizontal_alignment(HorizontalAlignment::Center),
@@ -175,9 +174,9 @@ impl Launcher {
             }
             if failed > 0 {
                 let summary = if failed == 1 {
-                    tf!("卡片无法显示：{}", "Card cannot be displayed: {}", first_reason)
+                    t!("page_cards.card_cannot_be_displayed", first_reason = first_reason).to_string()
                 } else {
-                    tf!("{} 张卡片无法显示：{}", "{} cards cannot be displayed: {}", failed, first_reason)
+                    t!("page_cards.cards_cannot_be_displayed", failed = failed, first_reason = first_reason).to_string()
                 };
 
                 let sender = context.sender();
@@ -238,7 +237,7 @@ impl Launcher {
         let active = self.card_slide;
 
         let title: View = TextBlock::new()
-            .text(t!("卡片选择", "Card select"))
+            .text(t!("common.card_select"))
             .font_size(26.0)
             .font_weight(FontWeight::SEMI_BOLD)
             .into();
@@ -300,7 +299,7 @@ impl Launcher {
                     .vertical_alignment(VerticalAlignment::Center)
                     .spacing(6.0)
                     .children([TextBlock::new()
-                        .text(t!("空白车卡", "Blank card"))
+                        .text(t!("page_cards.blank_card"))
                         .font_size(15.0)
                         .font_weight(FontWeight::SEMI_BOLD)]),
             )
@@ -329,7 +328,7 @@ impl Launcher {
                     .children((
                         TextBlock::new().text("＋").font_size(30.0).opacity(0.7),
                         TextBlock::new()
-                            .text(t!("新建车卡", "New card"))
+                            .text(t!("page_cards.new_card"))
                             .font_size(13.0),
                     )),
             )
@@ -429,7 +428,7 @@ impl Launcher {
     fn decode_builtin_base(png: &[u8]) -> Result<image::RgbaImage, String> {
         image::load_from_memory(png)
             .map(|img| img.to_rgba8())
-            .map_err(|e| tf!("解码内置底图失败：{}", "Failed to decode built-in base image: {}", e))
+            .map_err(|e| t!("page_cards.failed_to_decode_built_in", error = e).to_string())
     }
 
     fn card_car_offset(&self) -> (i64, i64) {
@@ -478,14 +477,14 @@ impl Launcher {
         self.ensure_card_base();
         let base = match self.base_cache.borrow().as_ref().map(|c| &c.result) {
             Some(Ok(img)) => img.clone(),
-            Some(Err(e)) => return fail(tf!("底图加载失败：{}", "Base image load failed: {}", e)),
-            None => return fail(t!("底图未加载", "Base image not loaded").to_string()),
+            Some(Err(e)) => return fail(t!("page_cards.base_image_load_failed", error = e).to_string()),
+            None => return fail(t!("page_cards.base_image_not_loaded").to_string()),
         };
         let (canvas_w, canvas_h) = (base.width(), base.height());
 
         let car = match image::open(car_path) {
             Ok(img) => img.to_rgba8(),
-            Err(e) => return fail(tf!("卡图解码失败：{}", "Card image decode failed: {}", e)),
+            Err(e) => return fail(t!("page_cards.card_image_decode_failed", error = e).to_string()),
         };
 
         let (ox, oy) = self.card_car_offset();
@@ -498,7 +497,7 @@ impl Launcher {
             image::codecs::png::FilterType::NoFilter,
         );
         if let Err(e) = composed.write_with_encoder(encoder) {
-            return fail(tf!("合成图编码失败：{}", "Composite image encode failed: {}", e));
+            return fail(t!("page_cards.composite_image_encode_failed", error = e).to_string());
         }
 
         let bytes: Arc<[u8]> = out.into_inner().into();
@@ -578,7 +577,7 @@ impl Launcher {
                         .background(ThemeBrush::CardStroke)
                         .content(
                             TextBlock::new()
-                                .text(tf!("无法显示\n{}", "Cannot display\n{}", reason))
+                                .text(t!("page_cards.cannot_display", reason = reason).to_string())
                                 .font_size(11.0)
                                 .opacity(0.85)
                                 .text_wrapping(TextWrapping::Wrap)
@@ -622,7 +621,7 @@ impl Launcher {
 
         let name_label: View = if active {
             TextBlock::new()
-                .text(tf!("{}（当前使用）", "{} (in use)", card.name))
+                .text(t!("page_cards.name_in_use", name = card.name).to_string())
                 .font_size(12.0)
                 .font_weight(FontWeight::SEMI_BOLD)
                 .horizontal_alignment(HorizontalAlignment::Center)

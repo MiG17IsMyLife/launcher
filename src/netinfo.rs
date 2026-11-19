@@ -1,3 +1,4 @@
+use rust_i18n::t;
 use windows::Win32::Foundation::ERROR_BUFFER_OVERFLOW;
 use windows::Win32::NetworkManagement::IpHelper::{
     GAA_FLAG_INCLUDE_PREFIX, GAA_FLAG_SKIP_ANYCAST, GAA_FLAG_SKIP_DNS_SERVER,
@@ -40,7 +41,7 @@ impl AdapterInfo {
         if self.description.is_empty() {
             self.friendly.clone()
         } else {
-            format!("{}（{}）", self.friendly, self.description)
+            t!("netinfo.adapter_label", name = self.friendly, description = self.description).to_string()
         }
     }
 }
@@ -319,7 +320,7 @@ mod tests {
             description: "Realtek PCIe".into(),
             ips: Vec::new(),
         };
-        assert_eq!(ad.label(), "以太网（Realtek PCIe）");
+        assert_eq!(ad.label(), t!("netinfo.adapter_label", name = "以太网", description = "Realtek PCIe"));
         let no_desc = AdapterInfo {
             description: String::new(),
             ..ad

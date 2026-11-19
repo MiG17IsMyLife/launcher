@@ -1,9 +1,10 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
+use rust_i18n::t;
+
 use crate::mice;
 use crate::render_util::{bool_str, copy_tool_files, deadzone_value, nx_num, push_xi_button, Sections, split_resolution};
-use crate::tf;
 use crate::storage::{
     CoinConfig, DPAD_CODE_BASE, GameRecord, GraphicsConfig, InputConfig, INPUT_RATIO_DEFAULT,
     NetworkConfig, SystemConfig,
@@ -255,20 +256,20 @@ pub fn deploy(
 ) -> Result<PathBuf, String> {
     let game = Path::new(&record.path);
     if !game.is_file() {
-        return Err(tf!("游戏文件不存在：{}", "Game file does not exist: {}", game.display()));
+        return Err(t!("common.game_file_does_not_exist", game = game.display()).to_string());
     }
     let Some(game_dir) = game.parent() else {
-        return Err(tf!("无法确定游戏目录：{}", "Cannot determine game directory: {}", game.display()));
+        return Err(t!("kitten.cannot_determine_game_directory", game = game.display()).to_string());
     };
     if !game_dir.is_dir() {
-        return Err(tf!("游戏目录不存在：{}", "Game directory does not exist: {}", game_dir.display()));
+        return Err(t!("common.game_directory_does_not_exist", game_dir = game_dir.display()).to_string());
     }
 
     copy_tool_files(tool_dir, game_dir, EXCLUDE_FILES, "kitten")?;
 
     let cfg_dir = game_dir.join("kitten");
     fs::create_dir_all(&cfg_dir)
-        .map_err(|e| tf!("创建 kitten 配置目录失败（{}）：{e}", "Failed to create kitten config directory ({}): {e}", cfg_dir.display()))?;
+        .map_err(|e| t!("kitten.failed_to_create_kitten_config", cfg_dir = cfg_dir.display(), error = e).to_string())?;
     write_config(&cfg_dir, dep)?;
 
     let mice_dep = mice::DeploySnapshot {
@@ -282,7 +283,7 @@ pub fn deploy(
     };
     let mice_dir = game_dir.join("mice");
     fs::create_dir_all(&mice_dir)
-        .map_err(|e| tf!("创建 mice 配置目录失败（{}）：{e}", "Failed to create mice config directory ({}): {e}", mice_dir.display()))?;
+        .map_err(|e| t!("kitten.failed_to_create_mice_config", mice_dir = mice_dir.display(), error = e).to_string())?;
     mice::write_atomic(&mice_dir.join("config.ini"), &mice::render_config(&mice_dep, mice::MiceTarget::Game))?;
 
     Ok(game_dir.join("kitten.exe"))
@@ -658,7 +659,8 @@ mod tests {
 
         let rec = record_at(&game);
         let err = deploy(&rec, &tool, &snapshot()).unwrap_err();
-        assert!(err.contains("游戏文件不存在"), "{err}");
+        let expected = t!("common.game_file_does_not_exist", game = Path::new(&rec.path).display());
+        assert_eq!(err, expected);
     }
 
     #[test]

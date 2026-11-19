@@ -5,8 +5,7 @@ use windows_reactor::*;
 use crate::db;
 use crate::rawinput;
 use crate::storage::{DPAD_CODE_BASE, GameRecord};
-use crate::t;
-use crate::tf;
+use rust_i18n::t;
 
 use super::message::Message;
 use super::pages::games::{ROW_COVER_H, ROW_COVER_W};
@@ -23,11 +22,11 @@ pub(super) fn row_chip(label: &str) -> View {
 pub(super) fn binding_label(value: u32) -> String {
     use rawinput::{DPAD_DOWN, DPAD_LEFT, DPAD_RIGHT, DPAD_UP};
     match value.checked_sub(DPAD_CODE_BASE) {
-        Some(DPAD_UP) => t!("十字键 上", "D-pad Up").to_string(),
-        Some(DPAD_RIGHT) => t!("十字键 右", "D-pad Right").to_string(),
-        Some(DPAD_DOWN) => t!("十字键 下", "D-pad Down").to_string(),
-        Some(DPAD_LEFT) => t!("十字键 左", "D-pad Left").to_string(),
-        _ => tf!("按钮 {}", "Button {}", value),
+        Some(DPAD_UP) => t!("widgets.d_pad_up").to_string(),
+        Some(DPAD_RIGHT) => t!("widgets.d_pad_right").to_string(),
+        Some(DPAD_DOWN) => t!("widgets.d_pad_down").to_string(),
+        Some(DPAD_LEFT) => t!("widgets.d_pad_left").to_string(),
+        _ => t!("widgets.button", value = value).to_string(),
     }
 }
 
@@ -161,7 +160,7 @@ pub(super) fn selectable_text(text: impl Into<String>) -> TextBlock {
 }
 
 pub(super) fn settings_toggle<C: IntoPayloadCallback<bool>>(on: bool, enabled: bool, callback: C) -> View {
-    let state_text = if on { t!("开", "On") } else { t!("关", "Off") };
+    let state_text = if on { t!("widgets.on") } else { t!("widgets.off") };
     StackPanel::new()
         .orientation(Orientation::Horizontal)
         .spacing(8.0)
@@ -281,7 +280,7 @@ pub(super) fn placeholder_page(title: &str, desc: &str) -> View {
                 .padding(Thickness::new(20.0, 28.0, 20.0, 28.0))
                 .content(
                     TextBlock::new()
-                        .text(t!("此页面正在建设中，设置项将逐步开放。", "This page is under construction; settings will be added gradually."))
+                        .text(t!("widgets.this_page_is_under_construction"))
                         .font_size(13.0)
                         .opacity(0.6)
                         .horizontal_alignment(HorizontalAlignment::Center),

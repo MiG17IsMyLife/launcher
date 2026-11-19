@@ -2,11 +2,9 @@ use std::time::{Duration, Instant};
 
 use windows_reactor::*;
 
-use crate::i18n;
 use crate::rawinput;
 use crate::storage::DPAD_CODE_BASE;
-use crate::t;
-use crate::tf;
+use rust_i18n::t;
 
 use crate::reactor_app::Launcher;
 use crate::reactor_app::message::{Dialog, Message};
@@ -35,31 +33,33 @@ pub(in crate::reactor_app) fn device_selection_index(
         .or_else(|| name.and_then(by_name))
 }
 
-pub(in crate::reactor_app) const INPUT_BUTTONS: &[(&str, &str)] = &[
-    ("油门", "Throttle"),
-    ("刹车", "Brake"),
-    ("升档", "Shift Up"),
-    ("降档", "Shift Down"),
-    ("方向上", "Up"),
-    ("方向下", "Down"),
-    ("方向左", "Left"),
-    ("方向右", "Right"),
-    ("start 键", "Start"),
-    ("view 键", "View"),
-    ("投币键", "Coin"),
-    ("插卡键", "Insert Card"),
-    ("1 挡", "Gear 1"),
-    ("2 挡", "Gear 2"),
-    ("3 挡", "Gear 3"),
-    ("4 挡", "Gear 4"),
-    ("5 挡", "Gear 5"),
-    ("6 挡", "Gear 6"),
-    ("倒挡", "Reverse"),
+/// The DirectInput bindings, as text keys of their labels; a binding's index is its slot.
+pub(in crate::reactor_app) const INPUT_BUTTONS: &[&str] = &[
+    "page_input.button_throttle",
+    "page_input.button_brake",
+    "page_input.button_shift_up",
+    "page_input.button_shift_down",
+    "page_input.button_up",
+    "page_input.button_down",
+    "page_input.button_left",
+    "page_input.button_right",
+    "page_input.button_start",
+    "page_input.button_view",
+    "page_input.button_coin",
+    "page_input.button_insert_card",
+    "page_input.button_gear_1",
+    "page_input.button_gear_2",
+    "page_input.button_gear_3",
+    "page_input.button_gear_4",
+    "page_input.button_gear_5",
+    "page_input.button_gear_6",
+    "page_input.button_reverse",
 ];
 
 pub(in crate::reactor_app) const SHIFTER_TYPES: &[&str] = &["sequential", "h"];
 
-pub(in crate::reactor_app) const SHIFTER_TYPE_LABELS: &[(&str, &str)] = &[("序列排挡", "Sequential"), ("H 排挡", "H-Pattern")];
+/// Text keys of the labels of [`SHIFTER_TYPES`], in the same order.
+pub(in crate::reactor_app) const SHIFTER_TYPE_LABELS: &[&str] = &["page_input.shifter_sequential", "page_input.shifter_h_pattern"];
 
 pub(in crate::reactor_app) const INPUT_BUTTONS_HEAD: &[usize] = &[0, 1];
 
@@ -89,19 +89,20 @@ pub(in crate::reactor_app) const INPUT_CAPTURE_TICK_MS: u64 = 100;
 
 pub(in crate::reactor_app) const XINPUT_MAP_BASE: usize = 100;
 
-pub(in crate::reactor_app) const XINPUT_BUTTON_SLOTS: &[(&str, &str, &str)] = &[
-    ("升档键", "Shift Up", "shiftUp"),
-    ("降档键", "Shift Down", "shiftDn"),
-    ("方向上", "Up", "up"),
-    ("方向下", "Down", "down"),
-    ("方向左", "Left", "left"),
-    ("方向右", "Right", "right"),
-    ("start 键", "Start", "start"),
-    ("view 键", "View", "viewChg"),
-    ("投币键", "Coin", "coin"),
-    ("插卡键", "Card", "card"),
-    ("油门键", "Accel", "accel"),
-    ("刹车键", "Brake", "brake"),
+/// The XInput bindings: the text key of each label and the button's name in the loaders' ini files.
+pub(in crate::reactor_app) const XINPUT_BUTTON_SLOTS: &[(&str, &str)] = &[
+    ("page_input.xinput_shift_up", "shiftUp"),
+    ("page_input.xinput_shift_down", "shiftDn"),
+    ("page_input.xinput_up", "up"),
+    ("page_input.xinput_down", "down"),
+    ("page_input.xinput_left", "left"),
+    ("page_input.xinput_right", "right"),
+    ("page_input.xinput_start", "start"),
+    ("page_input.xinput_view", "viewChg"),
+    ("page_input.xinput_coin", "coin"),
+    ("page_input.xinput_card", "card"),
+    ("page_input.xinput_accel", "accel"),
+    ("page_input.xinput_brake", "brake"),
 ];
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -151,9 +152,11 @@ pub(in crate::reactor_app) fn default_binding_label(d: DefaultBinding) -> String
     n.to_string()
 }
 
-pub(in crate::reactor_app) fn capture_label(slot: usize) -> Option<(&'static str, &'static str)> {
+/// The text key of the label of a binding slot (DirectInput slots first, XInput ones from
+/// [`XINPUT_MAP_BASE`]).
+pub(in crate::reactor_app) fn capture_label(slot: usize) -> Option<&'static str> {
     if let Some(local) = slot.checked_sub(XINPUT_MAP_BASE) {
-        XINPUT_BUTTON_SLOTS.get(local).map(|&(zh, en, _)| (zh, en))
+        XINPUT_BUTTON_SLOTS.get(local).map(|&(label, _)| label)
     } else {
         INPUT_BUTTONS.get(slot).copied()
     }
@@ -253,7 +256,7 @@ impl Launcher {
     pub(in crate::reactor_app) fn save_input(&mut self) {
         if let Err(e) = self.store.save_input(&self.input) {
             self.dialog = Dialog::Error {
-                message: tf!("保存 config.ini 失败：{}", "Failed to save config.ini: {}", e),
+                message: t!("common.failed_to_save_config_ini", error = e).to_string(),
             };
         }
     }
@@ -293,7 +296,7 @@ impl Launcher {
         let ffb_card = self.input_ffb_card(context);
 
         let mut sections: Vec<KeyedView> = vec![
-            KeyedView::new("sec-basic", settings_section(t!("基本设置", "Basic"), basic_rows)),
+            KeyedView::new("sec-basic", settings_section(&t!("page_input.basic"), basic_rows)),
             KeyedView::new("sec-ffb", ffb_card),
         ];
         if xinput || dinput {
@@ -307,7 +310,7 @@ impl Launcher {
                     "in-pad",
                     self.input_device_row(context,
                         Symbol::Directions,
-                        t!("手柄设备", "Gamepad"),
+                        &t!("page_input.gamepad"),
                         &pad_saved,
                         &pad_path,
                         true,
@@ -320,7 +323,7 @@ impl Launcher {
                     "in-dual-stick",
                     settings_row(
                         SymbolIcon::new().symbol(Symbol::Directions).into(),
-                        t!("双摇杆模式", "Dual stick mode"),
+                        &t!("page_input.dual_stick_mode"),
                         settings_toggle(
                             cfg.dual_stick == Some(true),
                             true,
@@ -333,7 +336,7 @@ impl Launcher {
                     "in-linear",
                     settings_row(
                         SymbolIcon::new().symbol(Symbol::Directions).into(),
-                        t!("线性方向", "Linear steering"),
+                        &t!("page_input.linear_steering"),
                         settings_toggle(
 
                             cfg.linear_steering != Some(false),
@@ -372,13 +375,13 @@ impl Launcher {
                 let ldz = cfg.left_deadzone.unwrap_or(INPUT_DEADZONE_DEFAULT) as f64;
                 detail.push(KeyedView::new(
                     "in-left-dz",
-                    deadzone_row(t!("左摇杆死区", "Left stick deadzone"), "leftStickDeadzone", ldz, Message::InputLeftDeadzoneChanged),
+                    deadzone_row(&t!("page_input.left_stick_deadzone"), "leftStickDeadzone", ldz, Message::InputLeftDeadzoneChanged),
                 ));
                 detail.push(KeyedView::new("in-sep-ldz", separator()));
                 let rdz = cfg.right_deadzone.unwrap_or(INPUT_DEADZONE_DEFAULT) as f64;
                 detail.push(KeyedView::new(
                     "in-right-dz",
-                    deadzone_row(t!("右摇杆死区", "Right stick deadzone"), "rightStickDeadzone", rdz, Message::InputRightDeadzoneChanged),
+                    deadzone_row(&t!("page_input.right_stick_deadzone"), "rightStickDeadzone", rdz, Message::InputRightDeadzoneChanged),
                 ));
                 detail.push(KeyedView::new("in-sep-rdz", separator()));
 
@@ -386,7 +389,7 @@ impl Launcher {
                     "in-xi-head",
                     settings_row(
                         SymbolIcon::new().symbol(Symbol::Keyboard).into(),
-                        t!("按键映射", "Button mapping"),
+                        &t!("page_input.button_mapping"),
                         View::from(StackPanel::new()),
                     ),
                 ));
@@ -406,7 +409,7 @@ impl Launcher {
                     "in-wheel",
                     self.input_device_row(context,
                         Symbol::Directions,
-                        t!("方向盘设备", "Steering wheel"),
+                        &t!("page_input.steering_wheel"),
                         &cfg.wheel_device,
                         &cfg.wheel_device_path,
                         false,
@@ -418,7 +421,7 @@ impl Launcher {
                     "in-pedal",
                     self.input_device_row(context,
                         Symbol::Up,
-                        t!("油门踏板设备", "Throttle pedal"),
+                        &t!("page_input.throttle_pedal"),
                         &cfg.pedal_device,
                         &cfg.pedal_device_path,
                         false,
@@ -430,7 +433,7 @@ impl Launcher {
                     "in-shifter",
                     self.input_device_row(context,
                         Symbol::Switch,
-                        t!("排挡设备", "Shifter"),
+                        &t!("page_input.shifter"),
                         &cfg.shifter_device,
                         &cfg.shifter_device_path,
                         false,
@@ -445,7 +448,7 @@ impl Launcher {
 
                 detail.push(KeyedView::new("in-sep-s", separator()));
                 let shifter_items: Vec<String> =
-                    SHIFTER_TYPE_LABELS.iter().map(|&(zh, en)| i18n::pick(zh, en).to_string()).collect();
+                    SHIFTER_TYPE_LABELS.iter().map(|&label| t!(label).to_string()).collect();
                 let shifter_idx = SHIFTER_TYPES
                     .iter()
                     .position(|v| Some(*v) == cfg.shifter_type.as_deref());
@@ -453,12 +456,12 @@ impl Launcher {
                     "in-shifter-type",
                     settings_row(
                         SymbolIcon::new().symbol(Symbol::List).into(),
-                        t!("排挡类型", "Shifter type"),
+                        &t!("page_input.shifter_type"),
                         ComboBox::new()
                             .width(180.0)
                             .items_source(shifter_items)
                             .selected_index(shifter_idx)
-                            .placeholder_text(t!("选择排挡类型", "Select shifter type"))
+                            .placeholder_text(t!("page_input.select_shifter_type"))
                             .on_selection_changed(
                                 context.callback(Message::InputShifterTypeSelected),
                             )
@@ -484,7 +487,7 @@ impl Launcher {
             }
             sections.push(KeyedView::new(
                 "sec-detail",
-                settings_section(t!("设备与按键", "Devices & buttons"), detail),
+                settings_section(&t!("page_input.devices_buttons"), detail),
             ));
         }
 
@@ -514,7 +517,7 @@ impl Launcher {
                 StackPanel::new()
                     .grid_column(0)
                     .children([TextBlock::new()
-                        .text(t!("输入设置", "Input"))
+                        .text(t!("nav.input"))
                         .font_size(26.0)
                         .font_weight(FontWeight::SEMI_BOLD)]),
                 Button::new()
@@ -528,7 +531,7 @@ impl Launcher {
                             .spacing(8.0)
                             .children((
                                 FontIcon::new().glyph("\u{E72C}"),
-                                TextBlock::new().text(t!("扫描设备", "Scan")),
+                                TextBlock::new().text(t!("page_input.scan")),
                             )),
                     ),
                 Button::new()
@@ -543,13 +546,10 @@ impl Launcher {
                             .children((
                                 FontIcon::new().glyph("\u{E9E9}"),
                                 TextBlock::new()
-                                    .text(t!("设备诊断", "Diagnostics")),
+                                    .text(t!("page_input.diagnostics")),
                             )),
                     )
-                    .tooltip(t!(
-                        "列出各 HID 接口解析到的设备名与写入值，可与「控制面板 → 游戏控制器」里的名字对照",
-                        "List parsed device names and the value written to ini; compare with Control Panel → Game Controllers"
-                    )),
+                    .tooltip(t!("page_input.list_parsed_device_names_and")),
             ))
     }
 
@@ -563,7 +563,7 @@ impl Launcher {
             .children((
                 SymbolIcon::new().symbol(Symbol::Rotate),
                 StackPanel::new().children([TextBlock::new()
-                    .text(t!("力反馈", "Force feedback"))
+                    .text(t!("page_input.force_feedback"))
                     .font_size(14.0)
                     .font_weight(FontWeight::SEMI_BOLD)]),
             ));
@@ -640,17 +640,17 @@ impl Launcher {
                 )
             };
             let ffb_detail: Vec<KeyedView> = vec![
-                KeyedView::new("ffb-cf", ffb_slider_row(0, Symbol::Directions, t!("恒力强度", "Constant force"), cfg.ffb_constant_force.unwrap_or(FFB_CONSTANT_FORCE_DEFAULT) as f64)),
+                KeyedView::new("ffb-cf", ffb_slider_row(0, Symbol::Directions, &t!("page_input.constant_force"), cfg.ffb_constant_force.unwrap_or(FFB_CONSTANT_FORCE_DEFAULT) as f64)),
                 KeyedView::new("ffb-sep1", separator()),
-                KeyedView::new("ffb-damper", ffb_slider_row(1, Symbol::Directions, t!("阻尼强度", "Damper"), cfg.ffb_damper.unwrap_or(FFB_DAMPER_DEFAULT) as f64)),
+                KeyedView::new("ffb-damper", ffb_slider_row(1, Symbol::Directions, &t!("page_input.damper"), cfg.ffb_damper.unwrap_or(FFB_DAMPER_DEFAULT) as f64)),
                 KeyedView::new("ffb-sep2", separator()),
-                KeyedView::new("ffb-rumble", ffb_slider_row(2, Symbol::Directions, t!("震动强度", "Rumble"), cfg.ffb_rumble.unwrap_or(FFB_RUMBLE_DEFAULT) as f64)),
+                KeyedView::new("ffb-rumble", ffb_slider_row(2, Symbol::Directions, &t!("page_input.rumble"), cfg.ffb_rumble.unwrap_or(FFB_RUMBLE_DEFAULT) as f64)),
                 KeyedView::new("ffb-sep3", separator()),
-                KeyedView::new("ffb-dur", ffb_slider_row(3, Symbol::Directions, t!("震动时长", "Rumble duration"), cfg.ffb_rumble_duration.unwrap_or(FFB_RUMBLE_DURATION_DEFAULT) as f64)),
+                KeyedView::new("ffb-dur", ffb_slider_row(3, Symbol::Directions, &t!("page_input.rumble_duration"), cfg.ffb_rumble_duration.unwrap_or(FFB_RUMBLE_DURATION_DEFAULT) as f64)),
                 KeyedView::new("ffb-sep4", separator()),
-                KeyedView::new("ffb-basedamper", ffb_slider_row(4, Symbol::Directions, t!("基础阻尼", "Base damper"), cfg.ffb_base_damper.unwrap_or(FFB_BASE_DAMPER_DEFAULT) as f64)),
+                KeyedView::new("ffb-basedamper", ffb_slider_row(4, Symbol::Directions, &t!("page_input.base_damper"), cfg.ffb_base_damper.unwrap_or(FFB_BASE_DAMPER_DEFAULT) as f64)),
                 KeyedView::new("ffb-sep5", separator()),
-                KeyedView::new("ffb-deadband", ffb_slider_row(5, Symbol::Directions, t!("中心死区", "Dead band"), cfg.ffb_dead_band.unwrap_or(FFB_DEAD_BAND_DEFAULT) as f64)),
+                KeyedView::new("ffb-deadband", ffb_slider_row(5, Symbol::Directions, &t!("page_input.dead_band"), cfg.ffb_dead_band.unwrap_or(FFB_DEAD_BAND_DEFAULT) as f64)),
             ];
             let items = StackPanel::new()
                 .horizontal_alignment(HorizontalAlignment::Stretch)
@@ -694,7 +694,7 @@ impl Launcher {
                 "in-test",
                 settings_row(
                     SymbolIcon::new().symbol(Symbol::Setting).into(),
-                    t!("test 键", "Test key"),
+                    &t!("page_input.test_key"),
                     fixed_key("F1"),
                 ),
             ),
@@ -703,7 +703,7 @@ impl Launcher {
                 "in-service",
                 settings_row(
                     SymbolIcon::new().symbol(Symbol::Manage).into(),
-                    t!("service 键", "Service key"),
+                    &t!("page_input.service_key"),
                     fixed_key("F2"),
                 ),
             ),
@@ -712,7 +712,7 @@ impl Launcher {
                 "in-coin",
                 settings_row(
                     SymbolIcon::new().symbol(Symbol::Keyboard).into(),
-                    t!("投币键", "Coin key"),
+                    &t!("page_input.coin_key"),
                     fixed_key("F3"),
                 ),
             ),
@@ -721,13 +721,13 @@ impl Launcher {
                 "in-kind",
                 settings_row(
                     SymbolIcon::new().symbol(Symbol::Manage).into(),
-                    t!("输入模式", "Input mode"),
+                    &t!("page_input.input_mode"),
                     ComboBox::new()
 
                         .width(180.0)
                         .items_source(kind_items)
                         .selected_index(kind_idx)
-                        .placeholder_text(t!("选择输入模式", "Select input mode"))
+                        .placeholder_text(t!("page_input.select_input_mode"))
                         .on_selection_changed(context.callback(Message::InputKindSelected))
                         .vertical_alignment(VerticalAlignment::Center)
                         .into(),
@@ -738,7 +738,7 @@ impl Launcher {
                 "in-ratio",
                 settings_row(
                     SymbolIcon::new().symbol(Symbol::Rotate).into(),
-                    t!("输入信号限制", "Input signal limit"),
+                    &t!("page_input.input_signal_limit"),
                     StackPanel::new()
                         .orientation(Orientation::Horizontal)
                         .spacing(12.0)
@@ -764,7 +764,7 @@ impl Launcher {
                                 .vertical_alignment(VerticalAlignment::Center)
 
                                 .content(FontIcon::new().glyph("\u{E7A7}"))
-                                .tooltip(tf!("恢复默认 {}", "Reset to default {}", INPUT_RATIO_DEFAULT))
+                                .tooltip(t!("page_input.reset_to_default", value = INPUT_RATIO_DEFAULT).to_string())
                                 .into();
                             (slider, text, reset)
                         })
@@ -782,7 +782,7 @@ impl Launcher {
         slot_local: usize,
         xi_conf: &[bool],
     ) -> View {
-            let (zh, en, _key) = XINPUT_BUTTON_SLOTS[slot_local];
+            let (label, _) = XINPUT_BUTTON_SLOTS[slot_local];
 
             let current: Option<String> = match slot_local {
                 0 => self.input.xi_shift_up.clone(),
@@ -804,8 +804,8 @@ impl Launcher {
             let desc = match current {
                 Some(c) => c,
                 None => match XINPUT_DEFAULTS.get(slot_local).copied().flatten() {
-                    Some(d) => tf!("默认 {}", "Default: {}", default_binding_label(d)),
-                    None => t!("未绑定", "Unbound").to_string(),
+                    Some(d) => t!("page_input.default", binding = default_binding_label(d)).to_string(),
+                    None => t!("page_input.unbound").to_string(),
                 },
             };
 
@@ -820,7 +820,7 @@ impl Launcher {
                         .spacing(2.0)
                         .vertical_alignment(VerticalAlignment::Center)
                         .children((
-                            TextBlock::new().text(i18n::pick(zh, en)).font_size(14.0),
+                            TextBlock::new().text(t!(label)).font_size(14.0),
                             {
                                 let mut tb = TextBlock::new().text(desc).font_size(12.0);
                                 if conflict {
@@ -837,7 +837,7 @@ impl Launcher {
                 .on_click(
                     context.message(Message::InputCaptureStart(XINPUT_MAP_BASE + slot_local)),
                 )
-                .content(t!("捕获", "Capture"))
+                .content(t!("page_input.capture").to_string())
                 .into();
             let right: View = Border::new()
                 .vertical_alignment(VerticalAlignment::Center)
@@ -871,11 +871,11 @@ impl Launcher {
         slot: usize,
         dinput_conf: &[bool],
     ) -> View {
-            let (zh, en) = INPUT_BUTTONS[slot];
+            let label = INPUT_BUTTONS[slot];
 
             let current: Option<String> = match slot {
-                0 => self.input.throttle_axis.as_ref().map(|a| tf!("轴 {}", "Axis {}", a)),
-                1 => self.input.brake_axis.as_ref().map(|a| tf!("轴 {}", "Axis {}", a)),
+                0 => self.input.throttle_axis.as_ref().map(|a| t!("page_input.axis", axis = a).to_string()),
+                1 => self.input.brake_axis.as_ref().map(|a| t!("page_input.axis", axis = a).to_string()),
                 2 => self.input.shift_up.map(binding_label),
                 3 => self.input.shift_down.map(binding_label),
                 4 => self.input.up_button.map(binding_label),
@@ -900,8 +900,8 @@ impl Launcher {
             let desc = match current {
                 Some(c) => c,
                 None => match DINPUT_DEFAULTS.get(slot).copied().flatten() {
-                    Some(d) => tf!("默认 {}", "Default: {}", default_binding_label(d)),
-                    None => t!("未绑定", "Unbound").to_string(),
+                    Some(d) => t!("page_input.default", binding = default_binding_label(d)).to_string(),
+                    None => t!("page_input.unbound").to_string(),
                 },
             };
 
@@ -916,7 +916,7 @@ impl Launcher {
                         .spacing(2.0)
                         .vertical_alignment(VerticalAlignment::Center)
                         .children((
-                            TextBlock::new().text(i18n::pick(zh, en)).font_size(14.0),
+                            TextBlock::new().text(t!(label)).font_size(14.0),
                             {
                                 let mut tb = TextBlock::new().text(desc).font_size(12.0);
                                 if conflict {
@@ -932,7 +932,7 @@ impl Launcher {
 
             let capture_btn: View = Button::new()
                 .on_click(context.message(Message::InputCaptureStart(slot)))
-                .content(t!("捕获", "Capture"))
+                .content(t!("page_input.capture").to_string())
                 .into();
             let right_content: View = if slot == 0 || slot == 1 {
                 let rev = match slot {
@@ -951,7 +951,7 @@ impl Launcher {
                                 context.callback(move |on: bool| Message::InputReverseToggled(slot, on)),
                             )
                             .vertical_alignment(VerticalAlignment::Center)
-                            .content(t!("反转轴值", "Reverse axis")),
+                            .content(t!("page_input.reverse_axis").to_string()),
                         capture_btn,
                     ))
                     .into()
@@ -1003,22 +1003,18 @@ impl Launcher {
                 by_path,
             );
             let placeholder = if !self.input_devices_scanned {
-                t!("正在扫描设备…", "Scanning devices...").to_string()
+                t!("page_input.scanning_devices").to_string()
             } else if self.input.kind.is_none() {
-                t!("请先选择输入类型", "Select an input type first").to_string()
+                t!("page_input.select_input_type_first").to_string()
             } else if self.input_devices.is_empty() {
-                t!("未发现设备，点击右上角「扫描设备」", "No device found; click \"Scan\" at top right").to_string()
+                t!("page_input.no_device_found").to_string()
             } else if selected.is_some() {
                 String::new()
             } else if let Some(v) = saved.as_deref().map(str::trim).filter(|v| !v.is_empty()) {
 
-                tf!(
-                    "已保存：{}（列表中无同名设备，按此值写入）",
-                    "Saved: {} (no device with this name in the list; this value is written as-is)",
-                    v
-                )
+                t!("page_input.saved", value = v).to_string()
             } else {
-                t!("选择设备", "Select device").to_string()
+                t!("page_input.select_device").to_string()
             };
             let combo: View = ComboBox::new()
                 .width(430.0)
@@ -1092,12 +1088,12 @@ impl Launcher {
     pub(in crate::reactor_app) fn start_capture(&mut self, slot: usize, context: &ComponentContext<Self>) {
 
         if let Some(local) = slot.checked_sub(XINPUT_MAP_BASE) {
-            if let Some(&(zh, en, _)) = XINPUT_BUTTON_SLOTS.get(local) {
+            if let Some(&(label, _)) = XINPUT_BUTTON_SLOTS.get(local) {
                 self.input_capture_gen += 1;
                 let epoch = self.input_capture_gen;
                 self.dialog = Dialog::InputCapture {
                     slot,
-                    label: i18n::pick(zh, en),
+                    label_key: label,
                 };
                 self.input_capture_start = Some(Instant::now());
                 self.input_capture_remain = 1.0;
@@ -1112,7 +1108,7 @@ impl Launcher {
                 return;
             }
         }
-        let Some(&(zh, en)) = INPUT_BUTTONS.get(slot) else {
+        let Some(&label) = INPUT_BUTTONS.get(slot) else {
             return;
         };
 
@@ -1120,7 +1116,7 @@ impl Launcher {
         let epoch = self.input_capture_gen;
         self.dialog = Dialog::InputCapture {
             slot,
-            label: i18n::pick(zh, en),
+            label_key: label,
         };
 
         self.input_capture_start = Some(Instant::now());
@@ -1169,11 +1165,9 @@ impl Launcher {
                 Dialog::InputCapture { slot, .. } => Some(slot),
                 _ => None,
             };
-            if let Some((zh, en)) = slot.and_then(capture_label) {
+            if let Some(label) = slot.and_then(capture_label) {
                 self.dialog = Dialog::Error {
-                    message: tf!("捕获「{}」超时，未检测到按键", "Capture of \"{}\" timed out; no key detected",
-                        i18n::pick(zh, en)
-                    ),
+                    message: t!("common.capture_timed_out", button = t!(label)).to_string(),
                 };
             }
             self.end_capture();

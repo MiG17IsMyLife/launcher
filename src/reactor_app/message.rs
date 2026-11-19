@@ -317,7 +317,8 @@ pub(super) enum Dialog {
 
     InputCapture {
         slot: usize,
-        label: &'static str,
+        /// Text key of the label of the binding being captured.
+        label_key: &'static str,
     },
 
     DeviceDiagnostics {

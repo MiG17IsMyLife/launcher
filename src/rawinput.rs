@@ -43,8 +43,7 @@ use windows::{
     core::{w, PCWSTR},
 };
 
-use crate::t;
-use crate::tf;
+use rust_i18n::t;
 
 const HID_USAGE_PAGE_GENERIC: u16 = 0x01;
 const HID_USAGE_JOYSTICK: u16 = 0x04;
@@ -93,13 +92,14 @@ pub enum NameSource {
 }
 
 impl NameSource {
-    fn tag(self) -> &'static str {
+    /// Text key of the name of this source, as the diagnostics report shows it.
+    fn label_key(self) -> &'static str {
         match self {
-            NameSource::HidProduct => "HID产品名",
-            NameSource::SiblingInterface => "同设备其它接口",
-            NameSource::DevNode => "设备实例名",
-            NameSource::ParentDevNode => "父设备名",
-            NameSource::PathFallback => "接口路径段",
+            NameSource::HidProduct => "rawinput.source_hid_product",
+            NameSource::SiblingInterface => "rawinput.source_sibling_interface",
+            NameSource::DevNode => "rawinput.source_dev_node",
+            NameSource::ParentDevNode => "rawinput.source_parent_dev_node",
+            NameSource::PathFallback => "rawinput.source_path_fallback",
         }
     }
 }
@@ -193,7 +193,7 @@ fn label_from_path(path: &str) -> String {
     if let Some((_, rest)) = lower.split_once("hid#") {
         rest.split('#').next().unwrap_or(rest).to_uppercase()
     } else {
-        t!("未知设备", "Unknown device").to_string()
+        t!("rawinput.unknown_device").to_string()
     }
 }
 
@@ -362,7 +362,7 @@ fn list_xinput_devices() -> Vec<GameDevice> {
         if unsafe { XInputGetCapabilities(index, XINPUT_FLAG_GAMEPAD, &mut caps) } != 0 {
             continue;
         }
-        let label = tf!("手柄 {}（XInput）", "Gamepad {} (XInput)", index + 1);
+        let label = t!("rawinput.gamepad", value = index + 1).to_string();
         devices.push(GameDevice {
             path: index.to_string(),
 
@@ -534,17 +534,13 @@ unsafe fn list_game_devices_impl() -> Vec<GameDevice> {
         }
     }
 
-    let mut report = String::from("[rawinput] HID 设备名诊断（写入值 = 游戏侧 deviceName）：\n");
+    let mut report = format!("{}\n", t!("rawinput.diagnostics_title"));
     let mut devices: Vec<GameDevice> = Vec::new();
     let mut fallback_paths: Vec<String> = Vec::new();
     for p in &paths {
         let (name, source) = resolve_device_name(p, group_rep.get(&group_key(p)));
-        report.push_str(&format!(
-            "  {} | 来源：{} | 写入值：{}\n",
-            p,
-            source.tag(),
-            name
-        ));
+        let line = t!("rawinput.diagnostics_device", path = p, source = t!(source.label_key()), name = name);
+        report.push_str(&format!("  {line}\n"));
 
         if source == NameSource::PathFallback {
             fallback_paths.push(p.clone());
@@ -562,19 +558,16 @@ unsafe fn list_game_devices_impl() -> Vec<GameDevice> {
     }
     for d in devices.iter_mut() {
         if counts.get(&d.name).copied().unwrap_or(0) > 1 {
-            d.label = format!("{}（{}）", d.name, label_from_path(&d.path));
+            d.label = t!("rawinput.label_with_path", name = d.name, path = label_from_path(&d.path)).to_string();
         }
 
         if fallback_paths.iter().any(|p| *p == d.path) {
-            d.label = tf!(
-                "{}（未取到产品名）",
-                "{} (product name unavailable)",
-                d.label
-            );
+            d.label = t!("rawinput.label_product_name_unavailable", label = d.label).to_string();
         }
     }
     for d in &devices {
-        report.push_str(&format!("  列表项：{} → 写入 {}\n", d.label, d.name));
+        let line = t!("rawinput.diagnostics_list_item", label = d.label, name = d.name);
+        report.push_str(&format!("  {line}\n"));
     }
     eprintln!("{report}");
     set_diagnostics(report);
@@ -649,7 +642,7 @@ unsafe fn capture_impl(timeout: Duration, kind: CaptureKind) -> bool {
     let hwnd = match CreateWindowExW(
         WINDOW_EX_STYLE(0),
         w!("DnetRawInputCapture"),
-        w!("Dnet 按键捕获"),
+        w!("Dnet input capture"),
         WINDOW_STYLE(0),
         0,
         0,
