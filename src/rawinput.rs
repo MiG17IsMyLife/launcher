@@ -16,7 +16,7 @@ use windows::{
             HidP_GetValueCaps, HidP_Input, PHIDP_PREPARSED_DATA,
         },
         Devices::Properties::{
-            DEVPKEY_NAME, DEVPKEY_Device_InstanceId, DEVPROP_TYPE_STRING, DEVPROPTYPE,
+            DEVPKEY_NAME, DEVPKEY_Device_DriverInfPath, DEVPKEY_Device_InstanceId, DEVPROP_TYPE_STRING, DEVPROPTYPE,
         },
         Foundation::{CloseHandle, DEVPROPKEY, HANDLE, HWND, LPARAM, LRESULT, WPARAM},
         Storage::FileSystem::{
@@ -233,19 +233,23 @@ fn is_top_level_collection(path: &str) -> bool {
     !path.to_lowercase().contains("&mi_")
 }
 
-fn is_generic_device_name(name: &str) -> bool {
-    const GENERIC: [&str; 8] = [
-        "composite",
-        "usb input device",
-        "hid-compliant",
-        "hid 兼容",
-        "usb 复合设备",
-        "generic",
-        "standard",
-        "符合 hid",
-    ];
-    let lower = name.to_lowercase();
-    GENERIC.iter().any(|g| lower.contains(g))
+/// The INF files of Windows' own class drivers. Windows names a device they drive after
+/// its class ("HID-compliant game controller", "USB Composite Device", … in the display
+/// language), so that name does not tell which product it is.
+const GENERIC_DRIVER_INFS: [&str; 7] =
+    ["input.inf", "hidserv.inf", "usb.inf", "usbhub.inf", "usbhub3.inf", "keyboard.inf", "msmouse.inf"];
+
+fn is_generic_driver_inf(inf: &str) -> bool {
+    GENERIC_DRIVER_INFS.iter().any(|generic| inf.eq_ignore_ascii_case(generic))
+}
+
+/// The name Windows shows for a device node, unless it is only the name of a device class.
+unsafe fn devnode_product_name(devnode: u32) -> Option<String> {
+    let inf = devnode_string_property(devnode, &DEVPKEY_Device_DriverInfPath).unwrap_or_default();
+    if is_generic_driver_inf(&inf) {
+        return None;
+    }
+    devnode_string_property(devnode, &DEVPKEY_NAME)
 }
 
 fn string_from_utf16_bytes(bytes: &[u8]) -> String {
@@ -312,10 +316,8 @@ unsafe fn pnp_device_name(path: &str) -> Option<(String, NameSource)> {
     {
         return None;
     }
-    if let Some(n) = devnode_string_property(devnode, &DEVPKEY_NAME) {
-        if !is_generic_device_name(&n) {
-            return Some((n, NameSource::DevNode));
-        }
+    if let Some(n) = devnode_product_name(devnode) {
+        return Some((n, NameSource::DevNode));
     }
     let mut parent = devnode;
     for _ in 0..2 {
@@ -324,10 +326,8 @@ unsafe fn pnp_device_name(path: &str) -> Option<(String, NameSource)> {
             break;
         }
         parent = next;
-        if let Some(n) = devnode_string_property(parent, &DEVPKEY_NAME) {
-            if !is_generic_device_name(&n) {
-                return Some((n, NameSource::ParentDevNode));
-            }
+        if let Some(n) = devnode_product_name(parent) {
+            return Some((n, NameSource::ParentDevNode));
         }
     }
     None
@@ -945,7 +945,7 @@ unsafe fn handle_raw_input(lparam: LPARAM) {
 
 #[cfg(test)]
 mod tests {
-    use super::{group_key, is_generic_device_name, is_top_level_collection};
+    use super::{group_key, is_generic_driver_inf, is_top_level_collection};
 
     #[test]
     fn same_device_shares_group_key() {
@@ -968,9 +968,10 @@ mod tests {
 
     #[test]
     fn generic_driver_names_are_rejected() {
-        assert!(is_generic_device_name("USB Composite Device"));
-        assert!(is_generic_device_name("HID-compliant game controller"));
-        assert!(is_generic_device_name("USB 复合设备"));
-        assert!(!is_generic_device_name("Thrustmaster Advance Racer"));
+        assert!(is_generic_driver_inf("input.inf"));
+        assert!(is_generic_driver_inf("usb.inf"));
+        assert!(is_generic_driver_inf("Input.INF"));
+        assert!(!is_generic_driver_inf("oem42.inf"));
+        assert!(!is_generic_driver_inf(""));
     }
 }

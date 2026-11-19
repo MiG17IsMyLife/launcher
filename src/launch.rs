@@ -7,8 +7,10 @@ use crate::db;
 use crate::detect;
 use crate::kitten;
 use crate::mice;
+use crate::netinfo;
 use crate::segatools;
 use crate::storage::{GameRecord, GraphicsConfig, Loader, Settings, launcher_dir};
+use crate::win_util::{self, CREATE_NO_WINDOW};
 use rust_i18n::t;
 
 #[derive(Clone, Debug, Default)]
@@ -212,83 +214,52 @@ fn game_dir_of(record: &GameRecord) -> PathBuf {
         .unwrap_or_else(|| PathBuf::from("."))
 }
 
+/// Gives the adapter `friendly` the ServerBox address `ip` as a second, static address,
+/// next to the one DHCP gave it. An address that is there already counts as added.
 pub fn add_serverbox_static_ip(friendly: &str, ip: &str, mask: &str) -> Result<(), String> {
-    let set_if = Command::new("netsh")
-        .args([
-            "interface",
-            "ipv4",
-            "set",
-            "interface",
-            &format!("interface=\"{friendly}\""),
-            "dhcpstaticipcoexistence=enabled",
-        ])
-        .output()
-        .map_err(|e| t!("launch.failed_to_run_netsh", error = e).to_string())?;
-    if !set_if.status.success() {
-        return Err(t!("launch.failed_to_enable_dhcp_static", output = String::from_utf8_lossy(&set_if.stderr)).to_string()
-        .trim()
-        .to_string());
+    let interface = format!("interface=\"{friendly}\"");
+    let coexistence =
+        run_netsh(&["interface", "ipv4", "set", "interface", &interface, "dhcpstaticipcoexistence=enabled"])?;
+    if !coexistence.success {
+        return Err(t!("launch.failed_to_enable_dhcp_static", output = coexistence.output).to_string());
     }
 
-    let add = Command::new("netsh")
-        .args([
-            "interface",
-            "ipv4",
-            "add",
-            "address",
-            &format!("\"{friendly}\""),
-            ip,
-            mask,
-        ])
-        .output()
-        .map_err(|e| t!("launch.failed_to_run_netsh", error = e).to_string())?;
-
-    let combined = format!(
-        "{}{}",
-        String::from_utf8_lossy(&add.stdout),
-        String::from_utf8_lossy(&add.stderr)
-    );
-    if add.status.success()
-        || combined.contains("already exists")
-        || combined.contains("已存在")
-    {
+    let add = run_netsh(&["interface", "ipv4", "add", "address", &format!("\"{friendly}\""), ip, mask])?;
+    // netsh also fails when the address is there already. Its message is in the user's
+    // display language, so look at the adapter instead.
+    if add.success || netinfo::adapter_has_ip(friendly, ip) {
         Ok(())
     } else {
-        Err(t!("launch.failed_to_add_static_ip", output = combined.trim()).to_string()
-        .trim()
-        .to_string())
+        Err(t!("launch.failed_to_add_static_ip", output = add.output).to_string())
     }
 }
 
+/// Takes the ServerBox address `ip` off the adapter `friendly` again. An address (or an
+/// adapter) that is gone already counts as removed.
 pub fn remove_serverbox_static_ip(friendly: &str, ip: &str) -> Result<(), String> {
-    let del = Command::new("netsh")
-        .args([
-            "interface",
-            "ipv4",
-            "delete",
-            "address",
-            &format!("\"{friendly}\""),
-            ip,
-        ])
+    let delete = run_netsh(&["interface", "ipv4", "delete", "address", &format!("\"{friendly}\""), ip])?;
+    if delete.success || !netinfo::adapter_has_ip(friendly, ip) {
+        Ok(())
+    } else {
+        Err(t!("launch.failed_to_remove_static_ip", output = delete.output).to_string())
+    }
+}
+
+/// What a netsh run reported: whether it succeeded, and what it wrote.
+struct NetshResult {
+    success: bool,
+    output: String,
+}
+
+/// Runs netsh without opening a console window.
+fn run_netsh(args: &[&str]) -> Result<NetshResult, String> {
+    let out = Command::new("netsh")
+        .args(args)
+        .creation_flags(CREATE_NO_WINDOW)
         .output()
         .map_err(|e| t!("launch.failed_to_run_netsh", error = e).to_string())?;
-    if del.status.success() {
-        return Ok(());
-    }
-    let combined = format!(
-        "{}{}",
-        String::from_utf8_lossy(&del.stdout),
-        String::from_utf8_lossy(&del.stderr)
-    );
-    if combined.contains("not found")
-        || combined.contains("找不到")
-        || combined.contains("不存在")
-    {
-        return Ok(());
-    }
-    Err(t!("launch.failed_to_remove_static_ip", output = combined.trim()).to_string()
-    .trim()
-    .to_string())
+    let output = win_util::decode_oem(&out.stdout) + &win_util::decode_oem(&out.stderr);
+    Ok(NetshResult { success: out.status.success(), output: output.trim().to_string() })
 }
 
 fn serverbox_dir_of(record: &GameRecord) -> Option<PathBuf> {
@@ -719,7 +690,7 @@ fn spawn_idac_game(
     let mut cmd = Command::new(inject);
     cmd.current_dir(&dir);
     cmd.args(segatools::game_args(kind, &game_exe, culture, &user_dir));
-    cmd.creation_flags(crate::win_util::CREATE_NO_WINDOW);
+    cmd.creation_flags(CREATE_NO_WINDOW);
     cmd.spawn()
         .map_err(|e| t!("launch.failed_to_start_game", game_exe = game_exe.display(), error = e).to_string())
 }
@@ -765,7 +736,7 @@ pub fn spawn_game(record: &GameRecord, loader: &Path) -> Result<std::process::Ch
                 .map(PathBuf::from)
                 .unwrap_or_else(|| PathBuf::from(&record.path));
             cmd.arg("-b").arg(&file);
-            cmd.creation_flags(crate::win_util::CREATE_NO_WINDOW);
+            cmd.creation_flags(CREATE_NO_WINDOW);
         }
         Loader::Segatools => {
 

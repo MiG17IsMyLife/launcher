@@ -103,6 +103,13 @@ pub fn subnet_labels(ips: &[IpInfo]) -> Vec<String> {
     out
 }
 
+/// Whether the adapter named `friendly` has the IPv4 address `ip` right now.
+pub fn adapter_has_ip(friendly: &str, ip: &str) -> bool {
+    list_adapters()
+        .iter()
+        .any(|a| a.friendly == friendly && a.ips.iter().any(|i| i.ip == ip))
+}
+
 pub fn list_adapters() -> Vec<AdapterInfo> {
     let mut adapters = Vec::new();
     let flags = GET_ADAPTERS_ADDRESSES_FLAGS(

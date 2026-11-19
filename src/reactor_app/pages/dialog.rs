@@ -92,13 +92,20 @@ impl Launcher {
                     .primary_button_text(t!("common.ok"))
                     .is_open(true)
                     .on_closed(context.callback(Message::DialogClosed))
+                    // A TextBlock, not a TextBox: the report is only read (and copied), and a
+                    // TextBox breaks lines at '\r' only, so it showed the '\n'-separated
+                    // report as one line.
                     .content(
-
-                        TextBox::new()
-                            .text(body)
-                            .accepts_return(true)
+                        ScrollViewer::new()
+                            .vertical_scroll_bar_visibility(ScrollBarVisibility::Auto)
                             .height(260.0)
-                            .min_width(520.0),
+                            .min_width(520.0)
+                            .content(
+                                TextBlock::new()
+                                    .text(body)
+                                    .text_wrapping(TextWrapping::Wrap)
+                                    .is_text_selection_enabled(true),
+                            ),
                     )
                     .into()
             }
