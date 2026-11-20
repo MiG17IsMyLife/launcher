@@ -762,7 +762,8 @@ impl Store {
         self.dir.join("settings.json")
     }
 
-    fn config_path(&self) -> PathBuf {
+    /// The launcher's `config.ini`.
+    pub fn config_path(&self) -> PathBuf {
         launcher_dir().join("config.ini")
     }
 

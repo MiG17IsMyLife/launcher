@@ -20,6 +20,7 @@ impl GameFamily for Idac {
             graphics_patch: false,
             region: true,
             cards: true,
+            game_settings: false,
             companion_executables: true,
             card_extension: "txt",
         }

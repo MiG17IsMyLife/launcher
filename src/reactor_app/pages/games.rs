@@ -303,6 +303,24 @@ impl Launcher {
                 ),
             ];
 
+            if features.game_settings {
+                rows.push(KeyedView::new("drop-sep-settings", separator()));
+                rows.push(KeyedView::new(
+                    "drop-settings",
+                    settings_row(
+                        SymbolIcon::new().symbol(Symbol::Setting).into(),
+                        &t!("page_games.game_settings"),
+                        Button::new()
+                            .on_click(context.message(Message::RowMenu {
+                                index,
+                                action: RowAction::GameSettings,
+                            }))
+                            .content(t!("page_games.enter").to_string())
+                            .into(),
+                    ),
+                ));
+            }
+
             if features.cards {
                 rows.push(KeyedView::new("drop-sep-cards", separator()));
                 rows.push(KeyedView::new(
@@ -722,6 +740,10 @@ impl Launcher {
             RowAction::Cards => {
                 self.dialog = Dialog::None;
                 self.enter_cards(index, context);
+            }
+            RowAction::GameSettings => {
+                self.dialog = Dialog::None;
+                self.nav_tag = "wmmt3".to_string();
             }
             RowAction::AddServerBox => {
                 self.pick_companion(context, CompanionKind::ServerBox, index);

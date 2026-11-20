@@ -31,7 +31,7 @@ use crate::vpn::{VpnHandle, VpnStatus};
 use self::message::{Dialog, Message};
 use self::widgets::spawn_anim_tick;
 use self::pages::graphics::{GFX_AF_LEVELS, GFX_MSAA_LEVELS, GFX_RENDER_SCALE_LEVELS, GFX_RESOLUTIONS};
-use self::pages::input::{capture_label, FFB_MAX, INPUT_KINDS, INPUT_RATIO_DEFAULT, INPUT_RATIO_MAX, SHIFTER_TYPES};
+use self::pages::input::{FFB_MAX, INPUT_KINDS, INPUT_RATIO_DEFAULT, INPUT_RATIO_MAX, SHIFTER_TYPES};
 use self::pages::network::{VPN_AUTO_RETRIES, VPN_STABLE_RESET};
 use self::pages::system::{SYS_LOGLEVELS, SYS_SEATS};
 use self::state::{CardBaseCache, GameRuntime, PendingAdd, ServerBoxRuntime};
@@ -65,6 +65,15 @@ pub struct Launcher {
     graphics: storage::GraphicsConfig,
 
     input: storage::InputConfig,
+
+    /// The settings of the WMMT3 games.
+    wmmt3: crate::games::Wmmt3Settings,
+
+    /// The game whose settings the Input page shows.
+    input_tab: pages::wmmt3::InputTab,
+
+    /// The DirectInput devices offered on the Input page's WMMT3 tab.
+    wmmt3_devices: Vec<rawinput::GameDevice>,
 
     vpn: VpnConfig,
 
@@ -239,6 +248,7 @@ impl Component for Launcher {
         let coin = store.load_coin();
         let graphics = store.load_graphics();
         let input = store.load_input();
+        let wmmt3 = crate::games::Wmmt3Settings::load(&store.config_path());
         let vpn = store.load_vpn();
         let room = store.load_room();
         let lang = store.load_lang();
@@ -278,6 +288,9 @@ impl Component for Launcher {
             coin,
             graphics,
             input,
+            wmmt3,
+            input_tab: pages::wmmt3::InputTab::default(),
+            wmmt3_devices: Vec::new(),
             vpn,
             vpn_status: VpnStatus::NotConfigured,
             vpn_handle: Arc::new(Mutex::new(None)),
@@ -385,6 +398,7 @@ impl Component for Launcher {
         let Some(message) = self.handle_system(message, context) else { return };
         let Some(message) = self.handle_graphics(message, context) else { return };
         let Some(message) = self.handle_input(message, context) else { return };
+        let Some(message) = self.handle_wmmt3(message, context) else { return };
         let Some(message) = self.handle_vpn(message, context) else { return };
         let Some(message) = self.handle_room(message, context) else { return };
         match message {
@@ -641,6 +655,7 @@ impl Component for Launcher {
 
         let content: View = match self.nav_tag.as_str() {
             "cards" => self.cards_page(context),
+            "wmmt3" => self.wmmt3_settings_page(context),
             "graphics" => self.graphics_page(context),
             "network" => self.network_page(context),
             "room" => self.room_page(context),
@@ -1080,16 +1095,11 @@ impl Launcher {
             Message::InputCaptured(epoch, slot, button) => self.apply_captured_button(epoch, slot, button),
             Message::InputCapturedAxis(epoch, slot, axis_name) => self.apply_captured_axis(epoch, slot, axis_name),
             Message::InputCapturedXi(epoch, slot, name) => self.apply_captured_xi_button(epoch, slot, name),
-            Message::InputCaptureTimeout(epoch, slot) => {
+            Message::InputCaptureTimeout(epoch) => {
                 if epoch != self.input_capture_gen {
                     return None;
                 }
-                if let Some(label) = capture_label(slot) {
-                    self.dialog = Dialog::Error {
-                        message: t!("common.capture_timed_out", button = t!(label)).to_string(),
-                    };
-                }
-                self.end_capture();
+                self.capture_timed_out();
             }
             other => return Some(other),
         };

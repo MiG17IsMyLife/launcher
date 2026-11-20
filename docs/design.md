@@ -242,7 +242,7 @@ The ServerBox is **no longer started together with the game**. It is started on 
 
 **Coin settings** (an expandable card on the System page): free play and the coins for start / continue / buying a car card / buying a car (0~99), saved to the `[coin]` section (`freeplay` / `start_coin` / `continue_coin` / `card_coin` / `car_coin`).
 
-**Input page** ("Scan devices" and "Device diagnostics" at the top right):
+**Input page** ("Scan devices" and "Device diagnostics" at the top right; with a WMMT3 game in the library, tabs switch between the Initial D settings below and the WMMT3 ones, see "Game families"):
 
 - **Basics**: the test / service / coin keys are fixed to F1/F2/F3 (shown for information); input mode (xinput / dinput); input signal limit (a 0~255 slider, default 128, resettable).
 - **Force feedback card** (the config is always written): switch (on by default) + constant force / damper / rumble strength / rumble duration (default 100) + base damper / centre dead band (default 20) sliders.
@@ -347,7 +347,7 @@ The games are grouped into families that are launched the same way (`src/games/`
 
 `games::launch_game` runs these in order (sections 1.1–1.7 describe what each family does), and adds the ServerBox's static IP between `prepare` and `start` for families with a ServerBox. The interface gathers a `LaunchInput` from the settings in effect and shows the result; a `LaunchProblem` names the page where the user can fix a missing setting. The game row and card page take their family-specific choices from these methods. The ServerBox row remains conditional on the matched build having a ServerBox CRC.
 
-**Wangan Midnight Maximum Tune 3 / 3DX / 3DX+** (`games/wmmt3.rs`): the launch copies kitten's files next to the game's `main`, sets the launcher's settings in `kitten\config.ini`, and starts `kitten.exe -b main`. KittenTools keeps every setting of these games in its `[wmmt3]` section (apart from `[sysconf] log_level`), so the launcher does not rebuild that file: it sets only `[sysconf] log_level` (System page) and `[wmmt3] free_play` (coin settings), when they are set, and leaves the rest of the file as it is, to be edited by hand. These games need no keychip, region or subnet, and have no card reader program, ServerBox, test mode switch (the test button is a key) or card page yet. They are not offered in rooms: their linked play needs the cabinets in one /24 network that carries multicast, which the rooms do not provide. Without a cover of its own, a game shows the "work in progress" image (`src/assets/cover_wip.png`).
+**Wangan Midnight Maximum Tune 3 / 3DX / 3DX+** (`games/wmmt3/`): the launch copies kitten's files next to the game's `main`, writes the launcher's settings into `kitten\config.ini`, and starts `kitten.exe -b main`. KittenTools keeps every setting of these games in its `[wmmt3]` section (apart from `[sysconf] log_level`). The launcher offers them on the Input page's WMMT3 tab (controls, force feedback, cabinet switches) and on the WMMT3 settings page opened from a WMMT3 game's row (screen, free play, linked play, sound, load times, dongle); `games/wmmt3/settings.rs` lists them with KittenTools' names and defaults, and must follow KittenTools' `wmmt3Config.def` when that changes. The values set there are kept in the launcher's `config.ini [wmmt3]`, shared by every WMMT3 build, and written into the game's `kitten\config.ini` at launch together with `[sysconf] log_level` (System page); a setting never changed in the launcher is not written, and the rest of the file stays as it is, to be edited by hand (the card reader and card settings, until the card page covers them). These games need no keychip, region or subnet, and have no card reader program, ServerBox, test mode switch (the test button is a key) or card page yet. They are not offered in rooms: their linked play needs the cabinets in one /24 network that carries multicast, which the rooms do not provide. Without a cover of its own, a game shows the "work in progress" image (`src/assets/cover_wip.png`).
 
 **Adding a game family**: write `src/games/<family>.rs` implementing `GameFamily`, and return it from `family_of`. Shared steps (card reader, graphics patch, ServerBox, `initialD.ini`) are in their own modules; the loader modules in `src/loaders/` only render config files.
 
@@ -371,7 +371,7 @@ The texts are compiled into the binary from `locales/<locale>.yml` by rust-i18n 
 - `settings.json`: loader paths (kitten/mice/mice64/segatools), `auto_check_updates`, and each component's `last_*_version`.
 - `images\`: cover cache; `awl\`: awl identity and config (`config_awl.json`); `update_cache.json`: update cache.
 
-`config.ini` next to the exe (`ini.rs` changes single keys and keeps the rest; password-type keys are DPAPI-encrypted): `[network]` (adapter / ip / simulate / server / host_ip / serverbox_ip), `[system]` (loglevel / region / keychip / skip_reader_init / auto_insert_card / seat / master), `[graphics]`, `[coin]`, `[input]` (type / ratio / devices / buttons / force feedback / xinput slot, about 40 keys), `[card]` (the global card, the fallback for the per-game card), `[vpn]` (config / passphrase / openvpn), `[room]` (directory / awl / last_room / last_password / nickname), `[ui]` (lang). Delete it to reset.
+`config.ini` next to the exe (`ini.rs` changes single keys and keeps the rest; password-type keys are DPAPI-encrypted): `[network]` (adapter / ip / simulate / server / host_ip / serverbox_ip), `[system]` (loglevel / region / keychip / skip_reader_init / auto_insert_card / seat / master), `[graphics]`, `[coin]`, `[input]` (type / ratio / devices / buttons / force feedback / xinput slot, about 40 keys), `[card]` (the global card, the fallback for the per-game card), `[vpn]` (config / passphrase / openvpn), `[room]` (directory / awl / last_room / last_password / nickname), `[wmmt3]` (the WMMT3 settings under KittenTools' names), `[ui]` (lang). Delete it to reset.
 
 ## Game database (games_db.json)
 
@@ -435,7 +435,7 @@ cargo test              # 200+ unit tests (CRC reproduction / database lookup / 
 │   ├── reactor_app.rs    # WinUI 3 main component (navigation / top bar / status bar / message dispatch) + the pages and dialogs under reactor_app/
 │   ├── games/            # The game families and how each is launched (see "Game families")
 │   │   ├── mod.rs        # GameFamily trait, LaunchInput, launch_game / launch_serverbox, family_of
-│   │   ├── idas_lindbergh.rs, idas_ringedge.rs, idac.rs, idz.rs, wmmt3.rs   # one family each
+│   │   ├── idas_lindbergh.rs, idas_ringedge.rs, idac.rs, idz.rs, wmmt3/   # one family each (wmmt3/settings.rs: its settings table)
 │   │   ├── idas.rs, alls.rs                # steps the IDAS / segatools families share
 │   │   ├── card_reader.rs  # picodaemon card reader: provisioning, idas.ini, start (with unit tests)
 │   │   ├── gfx_patch.rs    # winmm.dll + shaderfix graphics patch (with unit tests)

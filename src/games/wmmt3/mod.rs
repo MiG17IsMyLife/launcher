@@ -1,12 +1,12 @@
 //! Wangan Midnight Maximum Tune 3 / 3DX / 3DX+ (Namco System N2), run by kitten.
 //!
 //! Launching one: copy kitten's files into the game folder (next to the game's `main`),
-//! set the launcher's few settings in `kitten\config.ini`, then start `kitten.exe -b main`.
+//! write the launcher's settings into `kitten\config.ini`, then start `kitten.exe -b main`.
 //!
 //! KittenTools keeps every setting of these games in the `[wmmt3]` section of its
-//! `config.ini`, apart from `[sysconf] log_level`. The launcher sets only the keys it has
-//! a setting for and leaves the rest of the file as it is, so the other settings (screen,
-//! controls, card reader, linked play, …) can still be set in that file by hand.
+//! `config.ini`, apart from `[sysconf] log_level`. The launcher offers them on the Input
+//! page's WMMT3 tab and on the WMMT3 settings page ([`settings`]), and writes only the ones
+//! set there; the rest of the file stays as it is, so it can still be edited by hand.
 //!
 //! These games need no keychip, region or subnet, and have no card reader program, no
 //! ServerBox and no test mode switch (the test button is a key). Linked play is not offered
@@ -24,12 +24,21 @@ use crate::ini;
 use crate::loaders::{self, kitten};
 use crate::storage::GameRecord;
 
+pub mod settings;
+
+pub use settings::Wmmt3Settings;
+
 /// The game ids the game database gives these games (the start of Namco's game ids).
 const GAME_IDS: [&str; 3] = ["WM3", "W3X", "W3P"];
 
 /// Whether a database game id is one of these games.
 pub fn is_wmmt3(game_id: Option<&str>) -> bool {
     game_id.is_some_and(|id| GAME_IDS.contains(&id))
+}
+
+/// Whether a library record is one of these games.
+pub fn is_wmmt3_game(record: &GameRecord) -> bool {
+    record.loader == crate::storage::Loader::Kitten && is_wmmt3(record.game_id.as_deref())
 }
 
 pub struct Wmmt3;
@@ -42,6 +51,7 @@ impl GameFamily for Wmmt3 {
             companion_executables: false,
             region: false,
             cards: false,
+            game_settings: true,
             card_extension: "bin",
         }
     }
@@ -84,15 +94,15 @@ impl GameFamily for Wmmt3 {
     }
 }
 
-/// The keys of kitten's `config.ini` the launcher sets for these games, from its settings.
-/// A setting the launcher has no value for is left out, so the file keeps its own.
-fn settings(input: &LaunchInput) -> Vec<(&'static str, &'static str, String)> {
+/// The keys of kitten's `config.ini` the launcher sets for these games: the log level of
+/// the System page, and every WMMT3 setting set in the launcher.
+fn config_keys(input: &LaunchInput) -> Vec<(&'static str, &'static str, String)> {
     let mut keys = Vec::new();
     if let Some(level) = input.system.loglevel.as_deref().and_then(kitten::log_level_num) {
         keys.push(("sysconf", "log_level", level.to_string()));
     }
-    if let Some(free_play) = input.coin.freeplay {
-        keys.push(("wmmt3", "free_play", free_play.to_string()));
+    for (key, value) in input.wmmt3.set_values() {
+        keys.push((settings::SECTION, key, value.to_string()));
     }
     keys
 }
@@ -103,7 +113,7 @@ fn write_settings(config: &Path, input: &LaunchInput) -> Result<(), String> {
     if let Some(dir) = config.parent() {
         std::fs::create_dir_all(dir).map_err(failed)?;
     }
-    let keys = settings(input);
+    let keys = config_keys(input);
     let entries: Vec<(&str, &str, &str)> = keys.iter().map(|(s, k, v)| (*s, *k, v.as_str())).collect();
     ini::set_values(config, &entries).map_err(failed)
 }
@@ -128,15 +138,22 @@ mod tests {
     fn only_set_settings_are_written() {
         let mut input = test_input::input(Loader::Kitten, Some("W3P"));
         input.system.loglevel = None;
-        input.coin.freeplay = None;
-        assert!(settings(&input).is_empty());
+        assert!(config_keys(&input).is_empty());
 
         input.system.loglevel = Some("debug".into());
-        input.coin.freeplay = Some(true);
+        input.wmmt3 = Wmmt3Settings::from_pairs(&[("free_play", "true")]);
         assert_eq!(
-            settings(&input),
+            config_keys(&input),
             vec![("sysconf", "log_level", "1".to_string()), ("wmmt3", "free_play", "true".to_string())]
         );
+    }
+
+    #[test]
+    fn the_coin_page_does_not_decide_free_play() {
+        let mut input = test_input::input(Loader::Kitten, Some("W3P"));
+        input.system.loglevel = None;
+        input.coin.freeplay = Some(true);
+        assert!(config_keys(&input).is_empty());
     }
 
     #[test]
@@ -147,7 +164,7 @@ mod tests {
         write(&config, b"; The main config file\n[wmmt3]\n; Stretch\nstretch = true\nfree_play = false\n");
 
         let mut input = test_input::input(Loader::Kitten, Some("W3P"));
-        input.coin.freeplay = Some(true);
+        input.wmmt3 = Wmmt3Settings::from_pairs(&[("free_play", "true")]);
         write_settings(&config, &input).unwrap();
 
         let text = std::fs::read_to_string(&config).unwrap();
@@ -170,13 +187,13 @@ mod tests {
         let mut input = test_input::input(Loader::Kitten, Some("W3P"));
         input.record.path = game.join("main").to_string_lossy().into_owned();
         input.settings.kitten_path = Some(tools.join("kitten.exe").to_string_lossy().into_owned());
-        input.coin.freeplay = Some(true);
+        input.wmmt3 = Wmmt3Settings::from_pairs(&[("input_mode", "2")]);
 
         let prepared = Wmmt3.prepare(&input).unwrap_or_else(|p| panic!("{}", p.message));
         assert_eq!(prepared.loader, game.join("kitten.exe"));
         assert!(game.join("kitten.exe").is_file());
         let config = std::fs::read_to_string(game.join("kitten").join("config.ini")).unwrap();
-        assert!(config.contains("free_play = true"), "{config}");
+        assert!(config.contains("input_mode = 2"), "{config}");
         remove(&root);
     }
 
@@ -185,7 +202,7 @@ mod tests {
         let dir = fresh("wmmt3_new_config");
         let config = dir.join("kitten").join("config.ini");
         let mut input = test_input::input(Loader::Kitten, Some("W3P"));
-        input.coin.freeplay = Some(false);
+        input.wmmt3 = Wmmt3Settings::from_pairs(&[("free_play", "false")]);
         write_settings(&config, &input).unwrap();
         assert!(std::fs::read_to_string(&config).unwrap().contains("free_play = false"));
         remove(&dir);

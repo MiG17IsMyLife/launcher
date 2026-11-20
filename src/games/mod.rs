@@ -36,13 +36,13 @@ mod idas;
 mod idas_lindbergh;
 mod idas_ringedge;
 mod idz;
-mod wmmt3;
+pub mod wmmt3;
 
 pub use idac::Idac;
 pub use idas_lindbergh::IdasLindbergh;
 pub use idas_ringedge::IdasRingEdge;
 pub use idz::Idz;
-pub use wmmt3::Wmmt3;
+pub use wmmt3::{Wmmt3, Wmmt3Settings};
 
 use card_reader::CardReader;
 use serverbox::StaticIp;
@@ -71,6 +71,8 @@ pub struct LaunchInput {
     pub room_seat: Option<RoomSeat>,
     /// The adapter that gets the ServerBox address when the game needs one.
     pub serverbox_adapter: Option<String>,
+    /// The settings of the WMMT3 games (Input page tab and WMMT3 settings page).
+    pub wmmt3: Wmmt3Settings,
 }
 
 /// This PC's place in a room.
@@ -147,6 +149,8 @@ pub struct UiFeatures {
     pub region: bool,
     /// The game's card is chosen on the card page.
     pub cards: bool,
+    /// The game has a settings page of its own, opened from its row.
+    pub game_settings: bool,
     /// The extension shown for the selected card in the game row.
     pub card_extension: &'static str,
 }
@@ -187,7 +191,7 @@ pub trait GameFamily: Sync {
 /// The family a library record belongs to.
 pub fn family_of(record: &GameRecord) -> &'static dyn GameFamily {
     match record.loader {
-        Loader::Kitten if wmmt3::is_wmmt3(record.game_id.as_deref()) => &Wmmt3,
+        Loader::Kitten if wmmt3::is_wmmt3_game(record) => &Wmmt3,
         Loader::Kitten => &IdasLindbergh,
         Loader::Mice => &IdasRingEdge,
         Loader::Segatools => match segatools::game_kind(record.game_id.as_deref()) {
@@ -323,6 +327,7 @@ pub(crate) mod test_input {
             room: None,
             room_seat: None,
             serverbox_adapter: None,
+            wmmt3: Wmmt3Settings::default(),
         }
     }
 }
@@ -335,12 +340,12 @@ mod tests {
     #[test]
     fn ui_features_match_existing_game_rows() {
         let cases = [
-            (Loader::Kitten, Some("SBQZ"), UiFeatures { test_mode: true, graphics_patch: false, region: true, cards: true, companion_executables: false, card_extension: "png" }),
-            (Loader::Mice, Some("SBZZ"), UiFeatures { test_mode: true, graphics_patch: true, region: true, cards: true, companion_executables: false, card_extension: "png" }),
-            (Loader::Segatools, Some("SDGT"), UiFeatures { test_mode: false, graphics_patch: false, region: true, cards: true, companion_executables: true, card_extension: "txt" }),
-            (Loader::Segatools, Some("SDDF"), UiFeatures { test_mode: false, graphics_patch: false, region: true, cards: true, companion_executables: true, card_extension: "txt" }),
-            (Loader::Segatools, None, UiFeatures { test_mode: false, graphics_patch: false, region: true, cards: true, companion_executables: true, card_extension: "txt" }),
-            (Loader::Kitten, Some("W3P"), UiFeatures { test_mode: false, graphics_patch: false, region: false, cards: false, companion_executables: false, card_extension: "bin" }),
+            (Loader::Kitten, Some("SBQZ"), UiFeatures { test_mode: true, graphics_patch: false, region: true, cards: true, game_settings: false, companion_executables: false, card_extension: "png" }),
+            (Loader::Mice, Some("SBZZ"), UiFeatures { test_mode: true, graphics_patch: true, region: true, cards: true, game_settings: false, companion_executables: false, card_extension: "png" }),
+            (Loader::Segatools, Some("SDGT"), UiFeatures { test_mode: false, graphics_patch: false, region: true, cards: true, game_settings: false, companion_executables: true, card_extension: "txt" }),
+            (Loader::Segatools, Some("SDDF"), UiFeatures { test_mode: false, graphics_patch: false, region: true, cards: true, game_settings: false, companion_executables: true, card_extension: "txt" }),
+            (Loader::Segatools, None, UiFeatures { test_mode: false, graphics_patch: false, region: true, cards: true, game_settings: false, companion_executables: true, card_extension: "txt" }),
+            (Loader::Kitten, Some("W3P"), UiFeatures { test_mode: false, graphics_patch: false, region: false, cards: false, game_settings: true, companion_executables: false, card_extension: "bin" }),
         ];
         for (loader, id, expected) in cases {
             let rec = record(loader, id);

@@ -49,6 +49,7 @@ impl Launcher {
             room_seat: room.as_ref().map(|_| self.room_seat()),
             room,
             serverbox_adapter: self.selected_adapter().map(|a| a.friendly.clone()),
+            wmmt3: self.wmmt3.clone(),
         }
     }
 

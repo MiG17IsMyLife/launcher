@@ -26,6 +26,7 @@ impl GameFamily for IdasLindbergh {
             graphics_patch: false,
             region: true,
             cards: true,
+            game_settings: false,
             companion_executables: false,
             card_extension: "png",
         }

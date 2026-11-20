@@ -6,6 +6,7 @@ use crate::rawinput;
 use crate::storage::DPAD_CODE_BASE;
 use rust_i18n::t;
 
+use super::wmmt3::InputTab;
 use crate::reactor_app::Launcher;
 use crate::reactor_app::message::{Dialog, Message};
 use crate::reactor_app::widgets::{binding_label, separator, settings_row, settings_section, settings_toggle, spawn_anim_tick};
@@ -152,16 +153,6 @@ pub(in crate::reactor_app) fn default_binding_label(d: DefaultBinding) -> String
     n.to_string()
 }
 
-/// The text key of the label of a binding slot (DirectInput slots first, XInput ones from
-/// [`XINPUT_MAP_BASE`]).
-pub(in crate::reactor_app) fn capture_label(slot: usize) -> Option<&'static str> {
-    if let Some(local) = slot.checked_sub(XINPUT_MAP_BASE) {
-        XINPUT_BUTTON_SLOTS.get(local).map(|&(label, _)| label)
-    } else {
-        INPUT_BUTTONS.get(slot).copied()
-    }
-}
-
 impl Launcher {
 
     fn dinput_slot_button(&self, slot: usize) -> Option<u32> {
@@ -268,7 +259,7 @@ impl Launcher {
         self.input_capture_remain = 0.0;
     }
 
-    fn spawn_capture_tick(context: &ComponentContext<Self>, epoch: u32) {
+    pub(in crate::reactor_app) fn spawn_capture_tick(context: &ComponentContext<Self>, epoch: u32) {
         context.spawn_background(move |_| {
             std::thread::sleep(Duration::from_millis(INPUT_CAPTURE_TICK_MS));
             Message::InputCaptureTick(epoch)
@@ -276,6 +267,10 @@ impl Launcher {
     }
 
     pub(in crate::reactor_app) fn refresh_input_devices(&mut self, context: &ComponentContext<Self>) {
+        if self.shown_input_tab() == InputTab::Wmmt3 {
+            self.scan_wmmt3_devices(context);
+            return;
+        }
         self.input_devices_scanned = false;
         let kind = self.input.kind.clone();
         context.spawn_background(move |_| {
@@ -284,6 +279,33 @@ impl Launcher {
     }
 
     pub(in crate::reactor_app) fn input_page(&self, context: &mut ViewContext<Self>) -> View {
+        let sections = match self.shown_input_tab() {
+            InputTab::InitialD => self.initial_d_input_sections(context),
+            InputTab::Wmmt3 => self.wmmt3_input_sections(context),
+        };
+        let mut children = vec![KeyedView::new("header", self.input_header(context))];
+        if let Some(tabs) = self.input_tabs(context) {
+            children.push(KeyedView::new("tabs", tabs));
+        }
+        children.push(KeyedView::new(
+            format!("sections-{:?}", self.shown_input_tab()),
+            StackPanel::new().horizontal_alignment(HorizontalAlignment::Stretch).keyed_children(sections),
+        ));
+
+        ScrollViewer::new()
+            .vertical_scroll_bar_visibility(ScrollBarVisibility::Auto)
+            .content(
+                StackPanel::new()
+                    .horizontal_alignment(HorizontalAlignment::Stretch)
+                    .margin(Thickness::new(28.0, 20.0, 28.0, 16.0))
+                    .spacing(4.0)
+                    .keyed_children(children),
+            )
+            .into()
+    }
+
+    /// The Input page's sections for the Initial D games.
+    fn initial_d_input_sections(&self, context: &mut ViewContext<Self>) -> Vec<KeyedView> {
         let cfg = &self.input;
         let dinput = cfg.kind.as_deref() == Some("dinput");
         let xinput = cfg.kind.as_deref() == Some("xinput");
@@ -490,22 +512,7 @@ impl Launcher {
                 settings_section(&t!("page_input.devices_buttons"), detail),
             ));
         }
-
-        ScrollViewer::new()
-            .vertical_scroll_bar_visibility(ScrollBarVisibility::Auto)
-            .content(
-                StackPanel::new()
-                    .horizontal_alignment(HorizontalAlignment::Stretch)
-                    .margin(Thickness::new(28.0, 20.0, 28.0, 16.0))
-                    .spacing(4.0)
-                    .children((
-                        self.input_header(context),
-                        StackPanel::new()
-                            .horizontal_alignment(HorizontalAlignment::Stretch)
-                            .keyed_children(sections),
-                    )),
-            )
-            .into()
+        sections
     }
 
     fn input_header(&self, context: &mut ViewContext<Self>) -> View {
@@ -1091,10 +1098,7 @@ impl Launcher {
             if let Some(&(label, _)) = XINPUT_BUTTON_SLOTS.get(local) {
                 self.input_capture_gen += 1;
                 let epoch = self.input_capture_gen;
-                self.dialog = Dialog::InputCapture {
-                    slot,
-                    label_key: label,
-                };
+                self.dialog = Dialog::InputCapture { label_key: label };
                 self.input_capture_start = Some(Instant::now());
                 self.input_capture_remain = 1.0;
                 Self::spawn_capture_tick(context, epoch);
@@ -1102,7 +1106,7 @@ impl Launcher {
                 context.spawn_background(move |_| {
                     match rawinput::capture_xi_button(pad, (INPUT_CAPTURE_SECS * 1000.0) as u32) {
                         Some(c) => Message::InputCapturedXi(epoch, slot, c.name),
-                        None => Message::InputCaptureTimeout(epoch, slot),
+                        None => Message::InputCaptureTimeout(epoch),
                     }
                 });
                 return;
@@ -1114,10 +1118,7 @@ impl Launcher {
 
         self.input_capture_gen += 1;
         let epoch = self.input_capture_gen;
-        self.dialog = Dialog::InputCapture {
-            slot,
-            label_key: label,
-        };
+        self.dialog = Dialog::InputCapture { label_key: label };
 
         self.input_capture_start = Some(Instant::now());
         self.input_capture_remain = 1.0;
@@ -1127,7 +1128,7 @@ impl Launcher {
 
                 match rawinput::capture_axis((INPUT_CAPTURE_SECS * 1000.0) as u32) {
                     Some(c) => Message::InputCapturedAxis(epoch, slot, c.name),
-                    None => Message::InputCaptureTimeout(epoch, slot),
+                    None => Message::InputCaptureTimeout(epoch),
                 }
             } else {
                 match rawinput::capture_button((INPUT_CAPTURE_SECS * 1000.0) as u32) {
@@ -1140,7 +1141,7 @@ impl Launcher {
                         };
                         Message::InputCaptured(epoch, slot, code)
                     }
-                    None => Message::InputCaptureTimeout(epoch, slot),
+                    None => Message::InputCaptureTimeout(epoch),
                 }
             }
         });
@@ -1160,20 +1161,25 @@ impl Launcher {
             (1.0 - start.elapsed().as_secs_f64() / INPUT_CAPTURE_SECS).clamp(0.0, 1.0);
         self.input_capture_remain = remain;
         if remain <= 0.0 {
-
-            let slot = match self.dialog {
-                Dialog::InputCapture { slot, .. } => Some(slot),
-                _ => None,
-            };
-            if let Some(label) = slot.and_then(capture_label) {
-                self.dialog = Dialog::Error {
-                    message: t!("common.capture_timed_out", button = t!(label)).to_string(),
-                };
-            }
-            self.end_capture();
+            self.capture_timed_out();
             return;
         }
         Self::spawn_capture_tick(context, epoch);
+    }
+
+    /// Ends a capture that got no input, telling which binding it was for.
+    pub(in crate::reactor_app) fn capture_timed_out(&mut self) {
+        let label_key = match self.dialog {
+            Dialog::InputCapture { label_key } => Some(label_key),
+            _ => None,
+        };
+        // end_capture closes the dialog, so the message comes after it.
+        self.end_capture();
+        if let Some(label_key) = label_key {
+            self.dialog = Dialog::Error {
+                message: t!("common.capture_timed_out", button = t!(label_key)).to_string(),
+            };
+        }
     }
 
     pub(in crate::reactor_app) fn apply_captured_button(&mut self, epoch: u32, slot: usize, button: u32) {

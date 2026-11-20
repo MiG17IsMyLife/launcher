@@ -25,6 +25,7 @@ impl GameFamily for IdasRingEdge {
             graphics_patch: true,
             region: true,
             cards: true,
+            game_settings: false,
             companion_executables: false,
             card_extension: "png",
         }

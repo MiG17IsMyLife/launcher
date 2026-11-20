@@ -25,6 +25,8 @@ pub enum RowAction {
     RemoveAmdaemon,
     AddGameExe,
     RemoveGameExe,
+    /// Open the game's own settings page.
+    GameSettings,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -170,7 +172,19 @@ pub enum Message {
 
     InputCapturedXi(u32, usize, String),
 
-    InputCaptureTimeout(u32, usize),
+    InputCaptureTimeout(u32),
+
+    /// The Input page's game tab was chosen, by its title.
+    InputTabSelected(Option<String>),
+    /// A WMMT3 setting was given a value (`None` when its control was emptied).
+    Wmmt3SettingChanged(&'static str, Option<String>),
+    /// Capture a WMMT3 button binding from the device.
+    Wmmt3CaptureStart(&'static str),
+    /// A WMMT3 button binding was captured: epoch, setting key, value.
+    Wmmt3Captured(u32, &'static str, String),
+    /// The capture got a POV hat direction, which cannot be bound.
+    Wmmt3CapturedDpad(u32),
+    Wmmt3DevicesScanned(Box<Vec<rawinput::GameDevice>>),
 
     InputCaptureTick(u32),
 
@@ -316,7 +330,6 @@ pub(super) enum Dialog {
     },
 
     InputCapture {
-        slot: usize,
         /// Text key of the label of the binding being captured.
         label_key: &'static str,
     },

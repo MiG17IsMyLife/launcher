@@ -9,3 +9,4 @@ pub(super) mod overlay;
 pub(super) mod room;
 pub(super) mod settings;
 pub(super) mod system;
+pub(super) mod wmmt3;

@@ -21,6 +21,7 @@ impl GameFamily for Idz {
             graphics_patch: false,
             region: true,
             cards: true,
+            game_settings: false,
             companion_executables: true,
             card_extension: "txt",
         }
