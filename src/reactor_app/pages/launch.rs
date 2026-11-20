@@ -6,7 +6,7 @@ use windows_reactor::*;
 
 use rust_i18n::t;
 
-use crate::games::{self, Fix, LaunchInput, LaunchProblem, RoomSeat};
+use crate::games::{self, Fix, LaunchInput, LaunchProblem, RoomSeat, Wmmt3Settings};
 use crate::loaders;
 use crate::storage::GameRecord;
 
@@ -21,6 +21,8 @@ impl Launcher {
     /// Everything a launch of `rec` needs, from the settings in effect now (the room's
     /// network while this PC is in a room).
     fn launch_input(&mut self, rec: &GameRecord, card: Option<String>) -> LaunchInput {
+        // A change still waiting to be saved is part of the game's settings.
+        self.save_pending_now();
         self.detected = loaders::detect_loaders();
         let room = self.room_net_override();
 
@@ -32,8 +34,10 @@ impl Launcher {
             net.simulate = Some(false);
         }
 
-        let mut system = self.system.clone();
-        system.region = rec.region.clone().or_else(|| self.system.region.clone());
+        let saved = self.store.load_game_settings(rec);
+        let mut system = saved.system;
+        system.keychip = self.keychip.clone();
+        system.region = rec.region.clone().or_else(|| self.store.load_system().region);
 
         LaunchInput {
             record: rec.clone(),
@@ -42,14 +46,14 @@ impl Launcher {
             net,
             saved_subnet: self.net.ip.clone(),
             system,
-            coin: self.coin.clone(),
-            graphics: self.graphics.clone(),
-            input: self.input.clone(),
+            coin: saved.coin,
+            graphics: saved.graphics,
+            input: saved.input,
             card,
             room_seat: room.as_ref().map(|_| self.room_seat()),
             room,
             serverbox_adapter: self.selected_adapter().map(|a| a.friendly.clone()),
-            wmmt3: self.wmmt3.clone(),
+            wmmt3: Wmmt3Settings::load(&self.store.game_settings_path(rec)),
         }
     }
 
@@ -70,9 +74,10 @@ impl Launcher {
         let (page, game) = match problem.fix? {
             Fix::GameRow => ("games", Some(index)),
             Fix::Cards => ("cards", Some(index)),
-            Fix::System => ("system", None),
+            Fix::Keychip => ("settings", None),
             Fix::Network => ("network", None),
-            Fix::Input => ("input", None),
+            // The Input tab of the game's settings page (see `apply_dialog`).
+            Fix::Input => ("game_settings", Some(index)),
         };
         Some((page.to_string(), game))
     }

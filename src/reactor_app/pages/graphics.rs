@@ -3,7 +3,7 @@ use windows_reactor::*;
 use rust_i18n::t;
 
 use crate::reactor_app::Launcher;
-use crate::reactor_app::message::{Dialog, Message};
+use crate::reactor_app::message::Message;
 use crate::reactor_app::widgets::{separator, settings_row, settings_toggle};
 
 pub(in crate::reactor_app) const GFX_RESOLUTIONS: &[&str] = &["1360x768", "1920x1080", "2560x1440", "3840x2160"];
@@ -16,15 +16,16 @@ pub(in crate::reactor_app) const GFX_AF_LEVELS: &[&str] = &["2x", "4x", "8x", "1
 
 impl Launcher {
 
+    /// Saves the graphics settings into the file of the game whose settings page is open.
     pub(in crate::reactor_app) fn save_graphics(&mut self) {
-        if let Err(e) = self.store.save_graphics(&self.graphics) {
-            self.dialog = Dialog::Error {
-                message: t!("common.failed_to_save_config_ini", error = e).to_string(),
-            };
+        if let Some(game) = self.settings_game() {
+            let result = self.store.save_game_graphics(game, &self.graphics);
+            self.report_save(result);
         }
     }
 
-    pub(in crate::reactor_app) fn graphics_page(&self, context: &mut ViewContext<Self>) -> View {
+    /// The Graphics tab of an Initial D game's settings page.
+    pub(in crate::reactor_app) fn graphics_settings(&self, context: &mut ViewContext<Self>) -> View {
         let gfx = &self.graphics;
 
         let locked = gfx.default != Some(false);
@@ -203,7 +204,7 @@ impl Launcher {
             ));
         }
 
-        let card = Border::new()
+        Border::new()
             .margin(Thickness::new(0.0, 16.0, 0.0, 0.0))
             .horizontal_alignment(HorizontalAlignment::Stretch)
             .corner_radius(4.0)
@@ -214,22 +215,6 @@ impl Launcher {
                 StackPanel::new()
                     .horizontal_alignment(HorizontalAlignment::Stretch)
                     .keyed_children(rows),
-            );
-
-        ScrollViewer::new()
-            .vertical_scroll_bar_visibility(ScrollBarVisibility::Auto)
-            .content(
-                StackPanel::new()
-                    .horizontal_alignment(HorizontalAlignment::Stretch)
-                    .margin(Thickness::new(28.0, 20.0, 28.0, 16.0))
-                    .spacing(4.0)
-                    .children((
-                        StackPanel::new().children([TextBlock::new()
-                            .text(t!("nav.graphics"))
-                            .font_size(26.0)
-                            .font_weight(FontWeight::SEMI_BOLD)]),
-                        card,
-                    )),
             )
             .into()
     }

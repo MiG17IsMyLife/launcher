@@ -37,6 +37,21 @@ pub(super) fn record_db_match(game: &GameRecord) -> Option<db::DbMatch> {
     record_db_match_ref(game).cloned()
 }
 
+/// The name of a library game's built-in cover: the database's, which may be newer than
+/// the one saved when the game was added, else the saved one.
+pub(super) fn builtin_cover_name(game: &GameRecord) -> Option<String> {
+    record_db_match_ref(game).and_then(|matched| matched.image.clone()).or_else(|| game.cover.clone())
+}
+
+/// The name of a library game's platform: the database's, which may be newer than the one
+/// saved when the game was added, else the saved one, else its loader's.
+pub(super) fn platform_name(game: &GameRecord) -> String {
+    record_db_match_ref(game)
+        .and_then(|matched| matched.platform.clone())
+        .or_else(|| game.platform.clone())
+        .unwrap_or_else(|| game.loader.platform().to_string())
+}
+
 pub(super) fn record_matches_product(game: &GameRecord, product: &str) -> bool {
     if product.is_empty() {
         return false;
@@ -84,18 +99,20 @@ pub(super) fn settings_section(title: &str, rows: Vec<KeyedView>) -> View {
                 .text(title)
                 .font_size(16.0)
                 .font_weight(FontWeight::SEMI_BOLD),
-            Border::new()
-                .horizontal_alignment(HorizontalAlignment::Stretch)
-                .corner_radius(4.0)
-                .background(ThemeBrush::CardBackground)
-                .border_brush(ThemeBrush::CardStroke)
-                .border_thickness(1.0)
-                .content(
-                    StackPanel::new()
-                        .horizontal_alignment(HorizontalAlignment::Stretch)
-                        .keyed_children(rows),
-                ),
+            settings_card(rows),
         ))
+        .into()
+}
+
+/// A card of settings rows, in the Windows 11 Settings style.
+pub(super) fn settings_card(rows: Vec<KeyedView>) -> View {
+    Border::new()
+        .horizontal_alignment(HorizontalAlignment::Stretch)
+        .corner_radius(4.0)
+        .background(ThemeBrush::CardBackground)
+        .border_brush(ThemeBrush::CardStroke)
+        .border_thickness(1.0)
+        .content(StackPanel::new().horizontal_alignment(HorizontalAlignment::Stretch).keyed_children(rows))
         .into()
 }
 

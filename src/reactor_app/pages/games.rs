@@ -5,6 +5,7 @@ use std::sync::{Arc, Mutex, OnceLock};
 use windows_reactor::*;
 
 use crate::db;
+use crate::games::{family_of, Series};
 use crate::detect::{self, IdentifyResult};
 use crate::icf;
 use rust_i18n::t;
@@ -13,7 +14,8 @@ use crate::storage::GameRecord;
 use crate::reactor_app::Launcher;
 use crate::reactor_app::message::{CompanionKind, Dialog, IdentifyPayload, IcfPayload, Message, RowAction};
 use crate::reactor_app::state::PendingAdd;
-use crate::reactor_app::widgets::{make_id, now_secs, record_db_match, fallback_cover, row_chip, same_path, separator, settings_row, settings_row_sub, settings_toggle, spawn_anim_tick};
+use super::game_settings::SettingsTab;
+use crate::reactor_app::widgets::{builtin_cover_name, make_id, now_secs, platform_name, record_db_match, fallback_cover, row_chip, same_path, separator, settings_row, settings_row_sub, settings_toggle, spawn_anim_tick};
 
 pub(in crate::reactor_app) const ROW_COVER_W: f64 = 104.0;
 pub(in crate::reactor_app) const ROW_COVER_H: f64 = 68.0;
@@ -34,43 +36,48 @@ fn cover_file_exists(path: &str) -> bool {
     }
 }
 
-/// Sort by series while keeping the original library index for every row action.
-fn game_series_order(game: &GameRecord) -> (u8, u8) {
-    let identified = db::lookup_record(game);
-    let id = identified
-        .and_then(|matched| matched.game_id.as_deref())
-        .or(game.game_id.as_deref());
-    let series = match id {
-        Some("SBML") => 0,                          // D4 and D4 kai
-        Some("SBQZ" | "SBTS") => 1,                // D5
-        Some("SBUU" | "SBVW" | "SBWV") => 2,       // D6
-        Some("SBYD" | "SBYY") => 3,                // D7
-        Some("SBZZ" | "SDAL") => 4,                // D8
-        Some("SDDF" | "SDER") => 5,                // D Zero
-        Some("SDGT") => 6,                          // D The Arcade
-        _ => 7,
-    };
-    // D4 and D4 kai share SBML; prefer the identified product, falling back to
-    // the standard saved name for older records without a recognized CRC.
-    let product_name = identified.map(|matched| matched.name.as_str()).unwrap_or(&game.name);
-    let variant = u8::from(series == 0 && product_name.eq_ignore_ascii_case("InitialD Arcade Stage 4 kai JPN"));
-    (series, variant)
+/// The library's games as the Games page lists them: by series, and within one by release
+/// date (see [`db::release_order`]); a game the database does not know comes last in its
+/// series, in the order it was added. Each game keeps its index in the library, which every
+/// row action uses: the library itself is never reordered.
+fn games_by_series(games: &[GameRecord]) -> Vec<(Series, Vec<(usize, &GameRecord)>)> {
+    let mut rows: Vec<(Series, Option<(&str, usize)>, usize, &GameRecord)> = games
+        .iter()
+        .enumerate()
+        .map(|(index, game)| (family_of(game).ui_features().series, db::release_order(game), index, game))
+        .collect();
+    // `None` (not in the database) sorts after every release; the index keeps the order added.
+    rows.sort_by_key(|(series, release, index, _)| (*series, release.is_none(), *release, *index));
+
+    rows.chunk_by(|a, b| a.0 == b.0)
+        .map(|group| (group[0].0, group.iter().map(|(_, _, index, game)| (*index, *game)).collect()))
+        .collect()
 }
 
-fn ordered_games(games: &[GameRecord]) -> Vec<(usize, &GameRecord)> {
-    let mut rows: Vec<_> = games.iter().enumerate().collect();
-    // Stable sorting preserves the existing order within each series.
-    rows.sort_by_key(|(_, game)| game_series_order(game));
-    rows
+/// The heading of a series on the Games page.
+fn series_title(series: Series) -> String {
+    match series {
+        Series::InitialD => t!("page_games.series_initial_d"),
+        Series::WanganMidnight => t!("page_games.series_wangan_midnight"),
+    }
+    .to_string()
 }
 
 impl Launcher {
 
     pub(in crate::reactor_app) fn games_page(&self, context: &mut ViewContext<Self>) -> View {
-        let rows: Vec<KeyedView> = ordered_games(&self.library.games)
-            .into_iter()
-            .map(|(i, g)| self.game_row(context, i, g))
-            .collect();
+        let mut rows: Vec<KeyedView> = Vec::new();
+        for (series, games) in games_by_series(&self.library.games) {
+            rows.push(KeyedView::new(
+                format!("series-{series:?}"),
+                TextBlock::new()
+                    .text(series_title(series))
+                    .font_size(16.0)
+                    .font_weight(FontWeight::SEMI_BOLD)
+                    .margin(Thickness::new(0.0, 12.0, 0.0, 2.0)),
+            ));
+            rows.extend(games.into_iter().map(|(i, g)| self.game_row(context, i, g)));
+        }
 
         let subtitle = t!("page_games.game_count", games = self.library.games.len()).to_string();
 
@@ -147,7 +154,7 @@ impl Launcher {
                 }
             }
             if rendered.is_none() {
-                if let Some(bytes) = game.cover.as_deref().and_then(Self::builtin_cover_bytes) {
+                if let Some(bytes) = builtin_cover_name(game).as_deref().and_then(Self::builtin_cover_bytes) {
                     rendered = Some(
                         Image::new()
                             .source_data(EncodedImage::new(Arc::<[u8]>::from(bytes)))
@@ -182,10 +189,7 @@ impl Launcher {
             "\u{E76C}"
         });
 
-        let platform_label = game
-            .platform
-            .clone()
-            .unwrap_or_else(|| game.loader.platform().to_string());
+        let platform_label = platform_name(game);
         let right: View = StackPanel::new()
             .orientation(Orientation::Horizontal)
             .spacing(8.0)
@@ -303,23 +307,21 @@ impl Launcher {
                 ),
             ];
 
-            if features.game_settings {
-                rows.push(KeyedView::new("drop-sep-settings", separator()));
-                rows.push(KeyedView::new(
-                    "drop-settings",
-                    settings_row(
-                        SymbolIcon::new().symbol(Symbol::Setting).into(),
-                        &t!("page_games.game_settings"),
-                        Button::new()
-                            .on_click(context.message(Message::RowMenu {
-                                index,
-                                action: RowAction::GameSettings,
-                            }))
-                            .content(t!("page_games.enter").to_string())
-                            .into(),
-                    ),
-                ));
-            }
+            rows.push(KeyedView::new("drop-sep-settings", separator()));
+            rows.push(KeyedView::new(
+                "drop-settings",
+                settings_row(
+                    SymbolIcon::new().symbol(Symbol::Setting).into(),
+                    &t!("page_games.game_settings"),
+                    Button::new()
+                        .on_click(context.message(Message::RowMenu {
+                            index,
+                            action: RowAction::GameSettings,
+                        }))
+                        .content(t!("page_games.enter").to_string())
+                        .into(),
+                ),
+            ));
 
             if features.cards {
                 rows.push(KeyedView::new("drop-sep-cards", separator()));
@@ -611,6 +613,15 @@ impl Launcher {
         });
     }
 
+    /// Adds a game to the library. A game added while `config.ini` still holds the settings
+    /// it kept for every game gets them in a file of its own.
+    pub(in crate::reactor_app) fn add_game(&mut self, game: GameRecord) {
+        self.library.games.push(game);
+        self.store.save_library(&self.library);
+        let moved = self.store.move_shared_settings(&self.library.games);
+        self.report_moved_settings(moved);
+    }
+
     pub(in crate::reactor_app) fn handle_identified(&mut self, payload: IdentifyPayload) {
         let IdentifyPayload { path, result } = payload;
         match result {
@@ -618,7 +629,7 @@ impl Launcher {
             Ok(ir) => {
                 if let Some(d) = &ir.db {
 
-                    self.library.games.push(GameRecord {
+                    self.add_game(GameRecord {
                         id: make_id(),
                         path: path.display().to_string(),
                         name: d.name.clone(),
@@ -642,7 +653,6 @@ impl Launcher {
                         last_played: None,
                         added_at: now_secs(),
                     });
-                    self.store.save_library(&self.library);
                 } else {
 
                     let default = path
@@ -662,7 +672,7 @@ impl Launcher {
             Err(e) => self.dialog = Dialog::Error { message: t!("page_games.identification_failed", error = e).to_string() },
             Ok((_info, m)) => {
 
-                self.library.games.push(GameRecord {
+                self.add_game(GameRecord {
                     id: make_id(),
                     path: path.display().to_string(),
                     name: m.name.clone(),
@@ -686,7 +696,6 @@ impl Launcher {
                     last_played: None,
                     added_at: now_secs(),
                 });
-                self.store.save_library(&self.library);
             }
         }
     }
@@ -741,10 +750,7 @@ impl Launcher {
                 self.dialog = Dialog::None;
                 self.enter_cards(index, context);
             }
-            RowAction::GameSettings => {
-                self.dialog = Dialog::None;
-                self.nav_tag = "wmmt3".to_string();
-            }
+            RowAction::GameSettings => self.open_game_settings(index, SettingsTab::default(), context),
             RowAction::AddServerBox => {
                 self.pick_companion(context, CompanionKind::ServerBox, index);
             }
@@ -866,45 +872,61 @@ mod order_tests {
     use crate::games::test_input::record;
     use crate::storage::Loader;
 
+    /// A game added from its executable, which the database knows by `crc`.
+    fn by_crc(loader: Loader, crc: &str) -> GameRecord {
+        GameRecord { crc: Some(crc.into()), ..record(loader, None) }
+    }
+
+    /// A WMMT3 game added from its `main`; the library records the game id the database gave it.
+    fn wmmt3(crc: &str, game_id: &str) -> GameRecord {
+        GameRecord { crc: Some(crc.into()), ..record(Loader::Kitten, Some(game_id)) }
+    }
+
+    /// The library indices of the games, series by series.
+    fn order(games: &[GameRecord]) -> Vec<(Series, Vec<usize>)> {
+        games_by_series(games)
+            .into_iter()
+            .map(|(series, members)| (series, members.into_iter().map(|(i, _)| i).collect()))
+            .collect()
+    }
+
     #[test]
-    fn sorts_series_but_keeps_original_indices_and_order_within_series() {
+    fn games_are_listed_by_series_then_release_date() {
         let games = vec![
-            record(Loader::Segatools, Some("SDGT")),
-            record(Loader::Mice, Some("SBYY")),
-            record(Loader::Kitten, Some("SBQZ")),
-            record(Loader::Mice, Some("SBZZ")),
-            record(Loader::Kitten, Some("SBML")),
-            record(Loader::Segatools, Some("SDDF")),
-            record(Loader::Mice, Some("SBUU")),
-            record(Loader::Kitten, Some("SBTS")),
-            record(Loader::Mice, None),
+            wmmt3("0x85a0e7ab", "W3P"),           // 0: Maximum Tune 3DX+ JPN, 2010
+            by_crc(Loader::Kitten, "0xda04e5e0"), // 1: Arcade Stage 5 JPN, 2009
+            wmmt3("0xcf5dde93", "WM3"),           // 2: Maximum Tune 3 JPN, 2007
+            by_crc(Loader::Mice, "0x1fd6136a"),   // 3: Arcade Stage 8 JPN, 2014
+            wmmt3("0xfa4b36bc", "W3X"),           // 4: Maximum Tune 3DX JPN, 2008
+            by_crc(Loader::Kitten, "0x361d1cbe"), // 5: Arcade Stage 4 JPN, 2007
         ];
-        let indices: Vec<_> = ordered_games(&games).iter().map(|(i, _)| *i).collect();
-        assert_eq!(indices, [4, 2, 7, 6, 1, 3, 5, 0, 8]);
+        assert_eq!(order(&games), [(Series::InitialD, vec![5, 1, 3]), (Series::WanganMidnight, vec![2, 4, 0])]);
     }
 
     #[test]
-    fn uses_identified_build_for_older_records_without_a_game_id() {
-        let mut game = record(Loader::Kitten, None);
-        game.crc = Some("0xda04e5e0".into());
-        assert_eq!(game_series_order(&game), (1, 0));
-    }
-    #[test]
-    fn d4_precedes_kai_even_when_kai_was_added_first() {
-        let mut kai = record(Loader::Kitten, Some("SBML"));
-        kai.crc = Some("0x6cb19701".into());
-        let mut d4 = record(Loader::Kitten, Some("SBML"));
-        d4.crc = Some("0x361d1cbe".into());
-        let games = vec![kai, d4];
-        let indices: Vec<_> = ordered_games(&games).iter().map(|(i, _)| *i).collect();
-        assert_eq!(indices, [1, 0]);
+    fn versions_out_the_same_day_follow_the_database_jpn_exp_chn() {
+        let games = vec![
+            wmmt3("0x4753d367", "W3P"), // 3DX+ CHN
+            wmmt3("0x827c956b", "W3P"), // 3DX+ EXP
+            wmmt3("0x85a0e7ab", "W3P"), // 3DX+ JPN
+        ];
+        assert_eq!(order(&games), [(Series::WanganMidnight, vec![2, 1, 0])]);
     }
 
     #[test]
-    fn saved_d4_kai_name_is_used_when_crc_is_missing() {
-        let mut kai = record(Loader::Kitten, Some("SBML"));
-        kai.name = "InitialD Arcade Stage 4 kai JPN".into();
-        assert_eq!(game_series_order(&kai), (0, 1));
+    fn a_game_added_from_its_icf_is_placed_by_game_id_and_version() {
+        let mut season_2 = record(Loader::Segatools, Some("SDGT"));
+        season_2.version = Some("1.70.00".into());
+        let kai = by_crc(Loader::Kitten, "0x6cb19701"); // Arcade Stage 4 kai, 2008
+        assert_eq!(order(&[season_2, kai]), [(Series::InitialD, vec![1, 0])]);
     }
 
+    #[test]
+    fn unknown_games_come_last_in_their_series_in_the_order_added() {
+        let mut unknown_a = record(Loader::Kitten, None);
+        unknown_a.version = None;
+        let unknown_b = unknown_a.clone();
+        let games = vec![unknown_a, by_crc(Loader::Kitten, "0xda04e5e0"), unknown_b];
+        assert_eq!(order(&games), [(Series::InitialD, vec![1, 0, 2])]);
+    }
 }

@@ -6,7 +6,7 @@ use crate::rawinput;
 use crate::storage::DPAD_CODE_BASE;
 use rust_i18n::t;
 
-use super::wmmt3::InputTab;
+use crate::games::SettingsKind;
 use crate::reactor_app::Launcher;
 use crate::reactor_app::message::{Dialog, Message};
 use crate::reactor_app::widgets::{binding_label, separator, settings_row, settings_section, settings_toggle, spawn_anim_tick};
@@ -244,11 +244,11 @@ impl Launcher {
         flags
     }
 
+    /// Saves the input settings into the file of the game whose settings page is open.
     pub(in crate::reactor_app) fn save_input(&mut self) {
-        if let Err(e) = self.store.save_input(&self.input) {
-            self.dialog = Dialog::Error {
-                message: t!("common.failed_to_save_config_ini", error = e).to_string(),
-            };
+        if let Some(game) = self.settings_game() {
+            let result = self.store.save_game_input(game, &self.input);
+            self.report_save(result);
         }
     }
 
@@ -266,45 +266,33 @@ impl Launcher {
         });
     }
 
+    /// Looks for the input devices the open settings page offers.
     pub(in crate::reactor_app) fn refresh_input_devices(&mut self, context: &ComponentContext<Self>) {
-        if self.shown_input_tab() == InputTab::Wmmt3 {
-            self.scan_wmmt3_devices(context);
-            return;
+        match self.settings_kind() {
+            Some(SettingsKind::Wmmt3) => self.scan_wmmt3_devices(context),
+            Some(SettingsKind::InitialD) => {
+                self.input_devices_scanned = false;
+                let kind = self.input.kind.clone();
+                context.spawn_background(move |_| {
+                    Message::InputDevicesScanned(Box::new(rawinput::list_input_devices(kind.as_deref())))
+                });
+            }
+            None => {}
         }
-        self.input_devices_scanned = false;
-        let kind = self.input.kind.clone();
-        context.spawn_background(move |_| {
-            Message::InputDevicesScanned(Box::new(rawinput::list_input_devices(kind.as_deref())))
-        });
     }
 
-    pub(in crate::reactor_app) fn input_page(&self, context: &mut ViewContext<Self>) -> View {
-        let sections = match self.shown_input_tab() {
-            InputTab::InitialD => self.initial_d_input_sections(context),
-            InputTab::Wmmt3 => self.wmmt3_input_sections(context),
-        };
-        let mut children = vec![KeyedView::new("header", self.input_header(context))];
-        if let Some(tabs) = self.input_tabs(context) {
-            children.push(KeyedView::new("tabs", tabs));
-        }
-        children.push(KeyedView::new(
-            format!("sections-{:?}", self.shown_input_tab()),
-            StackPanel::new().horizontal_alignment(HorizontalAlignment::Stretch).keyed_children(sections),
-        ));
-
-        ScrollViewer::new()
-            .vertical_scroll_bar_visibility(ScrollBarVisibility::Auto)
-            .content(
-                StackPanel::new()
-                    .horizontal_alignment(HorizontalAlignment::Stretch)
-                    .margin(Thickness::new(28.0, 20.0, 28.0, 16.0))
-                    .spacing(4.0)
-                    .keyed_children(children),
-            )
+    /// The Input tab of an Initial D game's settings page.
+    pub(in crate::reactor_app) fn input_settings(&self, context: &mut ViewContext<Self>) -> View {
+        let mut children = vec![KeyedView::new("input-header", self.input_header(context))];
+        children.extend(self.initial_d_input_sections(context));
+        StackPanel::new()
+            .horizontal_alignment(HorizontalAlignment::Stretch)
+            .spacing(4.0)
+            .keyed_children(children)
             .into()
     }
 
-    /// The Input page's sections for the Initial D games.
+    /// The Input tab's sections for the Initial D games.
     fn initial_d_input_sections(&self, context: &mut ViewContext<Self>) -> Vec<KeyedView> {
         let cfg = &self.input;
         let dinput = cfg.kind.as_deref() == Some("dinput");
@@ -515,23 +503,18 @@ impl Launcher {
         sections
     }
 
-    fn input_header(&self, context: &mut ViewContext<Self>) -> View {
-
-        Grid::new()
-            .columns([GridLength::Star(1.0), GridLength::Auto, GridLength::Auto])
-            .column_spacing(8.0)
+    /// The Input tab's "Scan devices" and "Device diagnostics" buttons, at the right.
+    pub(in crate::reactor_app) fn input_header(&self, context: &mut ViewContext<Self>) -> View {
+        StackPanel::new()
+            .orientation(Orientation::Horizontal)
+            .horizontal_alignment(HorizontalAlignment::Right)
+            .margin(Thickness::new(0.0, 8.0, 0.0, 0.0))
+            .spacing(8.0)
             .children((
-                StackPanel::new()
-                    .grid_column(0)
-                    .children([TextBlock::new()
-                        .text(t!("nav.input"))
-                        .font_size(26.0)
-                        .font_weight(FontWeight::SEMI_BOLD)]),
                 Button::new()
                     .style(ButtonStyle::Subtle)
                     .on_click(context.message(Message::InputRefreshDevices))
                     .vertical_alignment(VerticalAlignment::Center)
-                    .grid_column(1)
                     .content(
                         StackPanel::new()
                             .orientation(Orientation::Horizontal)
@@ -545,7 +528,6 @@ impl Launcher {
                     .style(ButtonStyle::Subtle)
                     .on_click(context.message(Message::InputDeviceDiagnosticsOpen))
                     .vertical_alignment(VerticalAlignment::Center)
-                    .grid_column(2)
                     .content(
                         StackPanel::new()
                             .orientation(Orientation::Horizontal)

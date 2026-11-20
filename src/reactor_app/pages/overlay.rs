@@ -7,6 +7,7 @@ use rust_i18n::t;
 
 use crate::reactor_app::Launcher;
 use crate::reactor_app::message::Message;
+use crate::reactor_app::widgets::{builtin_cover_name, platform_name};
 
 const PANEL_COVER_W: f64 = 168.0;
 const PANEL_COVER_H: f64 = 112.0;
@@ -50,13 +51,11 @@ impl Launcher {
             }
             if rendered.is_none() {
 
-                let big_key = game
-                    .cover
-                    .as_deref()
-                    .map(|c| format!("{}_big.png", c.trim_end_matches(".png")));
+                let cover = builtin_cover_name(game);
+                let big_key = cover.as_deref().map(|c| format!("{}_big.png", c.trim_end_matches(".png")));
                 let bytes = big_key
                     .and_then(|k| Self::builtin_cover_bytes(&k))
-                    .or_else(|| game.cover.as_deref().and_then(Self::builtin_cover_bytes));
+                    .or_else(|| cover.as_deref().and_then(Self::builtin_cover_bytes));
                 if let Some(bytes) = bytes {
                     rendered = Some(
                         Image::new()
@@ -97,10 +96,7 @@ impl Launcher {
                 .into()
         };
 
-        let platform_label = game
-            .platform
-            .clone()
-            .unwrap_or_else(|| game.loader.platform().to_string());
+        let platform_label = platform_name(game);
         let title_row = StackPanel::new()
             .orientation(Orientation::Horizontal)
             .spacing(20.0)

@@ -9,7 +9,7 @@ use crate::storage::GameRecord;
 
 use rust_i18n::t;
 
-use super::{check_initial_d_settings, CardKind, UiFeatures, GameFamily, LaunchInput, LaunchProblem, Prepared, Started, alls};
+use super::{check_initial_d_settings, CardKind, Series, SettingsKind, UiFeatures, GameFamily, LaunchInput, LaunchProblem, Prepared, Started, alls};
 
 pub struct Idac;
 
@@ -20,7 +20,8 @@ impl GameFamily for Idac {
             graphics_patch: false,
             region: true,
             cards: true,
-            game_settings: false,
+            settings: SettingsKind::InitialD,
+            series: Series::InitialD,
             companion_executables: true,
             card_extension: "txt",
         }

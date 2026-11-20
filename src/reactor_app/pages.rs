@@ -1,5 +1,6 @@
 pub(super) mod cards;
 pub(super) mod dialog;
+pub(super) mod game_settings;
 pub(super) mod games;
 pub(super) mod graphics;
 pub(super) mod input;

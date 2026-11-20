@@ -686,19 +686,101 @@ fn load_system_from(path: &Path) -> SystemConfig {
     }
 }
 
-fn save_system_to(path: &Path, cfg: &SystemConfig) -> io::Result<()> {
-    if !path.exists() {
-        fs::write(path, "; Sasayaki Launcher settings\n")?;
-    }
+/// Writes the `[system]` keys that belong to a game ([`GAME_SYSTEM_KEYS`]).
+fn save_game_system_to(path: &Path, cfg: &SystemConfig) -> io::Result<()> {
     let mut w = ini::writer(path);
     w.set("system", "loglevel", cfg.loglevel.as_deref().unwrap_or(""));
-    w.set("system", "region", cfg.region.as_deref().unwrap_or(""));
-    w.set("system", "keychip", cfg.keychip.as_deref().unwrap_or(""));
-    w.set("system", "skip_reader_init", match cfg.skip_reader_init { Some(true) => "1", Some(false) => "0", None => "", });
-    w.set("system", "auto_insert_card", match cfg.auto_insert_card { Some(true) => "1", Some(false) => "0", None => "", });
+    w.set("system", "skip_reader_init", flag(cfg.skip_reader_init));
+    w.set("system", "auto_insert_card", flag(cfg.auto_insert_card));
     w.set("system", "seat", cfg.seat.as_deref().unwrap_or(""));
-    w.set("system", "master", match cfg.master { Some(true) => "1", Some(false) => "0", None => "", });
+    w.set("system", "master", flag(cfg.master));
     w.flush()
+}
+
+/// The `[system]` keys that belong to a game. The others (keychip, region) stay in
+/// `config.ini`: the keychip also names this PC in the rooms.
+const GAME_SYSTEM_KEYS: [&str; 5] = ["loglevel", "skip_reader_init", "auto_insert_card", "seat", "master"];
+
+/// What a game's settings file holds, which `config.ini` kept for every game before each
+/// game had a file of its own: whole sections (`None`), or the keys listed of a section.
+const GAME_SETTINGS: [(&str, Option<&[&str]>); 5] = [
+    ("graphics", None),
+    ("coin", None),
+    ("input", None),
+    ("wmmt3", None),
+    ("system", Some(&GAME_SYSTEM_KEYS)),
+];
+
+/// The settings a game keeps in its own file.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct GameSettings {
+    /// Only the [`GAME_SYSTEM_KEYS`] are set.
+    pub system: SystemConfig,
+    pub coin: CoinConfig,
+    pub graphics: GraphicsConfig,
+    pub input: InputConfig,
+}
+
+fn load_game_settings_from(path: &Path) -> GameSettings {
+    let mut system = load_system_from(path);
+    system.keychip = None;
+    system.region = None;
+    GameSettings {
+        system,
+        coin: load_coin_from(path),
+        graphics: load_graphics_from(path),
+        input: load_input_from(path),
+    }
+}
+
+/// Creates a game's settings file, with a first line naming the game, when it does not exist.
+fn create_game_settings_file(path: &Path, game_name: &str) -> io::Result<()> {
+    if path.exists() {
+        return Ok(());
+    }
+    if let Some(dir) = path.parent() {
+        ensure_dir(dir)?;
+    }
+    fs::write(path, format!("; Sasayaki Launcher settings of {game_name}\n"))
+}
+
+/// Moves the game settings that `config.ini` kept for every game into the games' own files.
+///
+/// Each game without a file of its own gets one with those settings, so it launches as it
+/// did before. Once every game has its file, the settings are taken out of `config.ini`.
+/// With no game in the library they stay there, for the first game added.
+fn move_shared_settings(config: &Path, games_dir: &Path, games: &[GameRecord]) -> io::Result<()> {
+    let mut shared: Vec<(&str, String, String)> = Vec::new();
+    for (section, keys) in GAME_SETTINGS {
+        for (key, value) in ini::section_entries(config, section) {
+            if keys.is_none_or(|keys| keys.iter().any(|k| k.eq_ignore_ascii_case(&key))) {
+                shared.push((section, key, value));
+            }
+        }
+    }
+    if shared.is_empty() || games.is_empty() {
+        return Ok(());
+    }
+
+    let entries: Vec<(&str, &str, &str)> = shared.iter().map(|(s, k, v)| (*s, k.as_str(), v.as_str())).collect();
+    for game in games {
+        let path = game_settings_file_in(games_dir, game);
+        if path.exists() {
+            continue;
+        }
+        create_game_settings_file(&path, &game.name)?;
+        ini::set_values(&path, &entries)?;
+    }
+
+    for (section, keys) in GAME_SETTINGS {
+        ini::remove_entries(config, section, keys)?;
+    }
+    Ok(())
+}
+
+/// The settings file of `game` in `games_dir`.
+fn game_settings_file_in(games_dir: &Path, game: &GameRecord) -> PathBuf {
+    games_dir.join(format!("{}.ini", game.id))
 }
 
 pub fn launcher_dir() -> PathBuf {
@@ -811,12 +893,66 @@ impl Store {
         save_room_to(&self.config_path(), cfg)
     }
 
+    /// The `[system]` settings of `config.ini`: the keychip, and the region a game without one
+    /// of its own falls back to.
     pub fn load_system(&self) -> SystemConfig {
         load_system_from(&self.config_path())
     }
 
-    pub fn save_system(&self, cfg: &SystemConfig) -> io::Result<()> {
-        save_system_to(&self.config_path(), cfg)
+    pub fn save_keychip(&self, keychip: Option<&str>) -> io::Result<()> {
+        let path = self.config_path();
+        if !path.exists() {
+            fs::write(&path, "; Sasayaki Launcher settings\n")?;
+        }
+        ini::set_value(&path, "system", "keychip", keychip.unwrap_or(""))
+    }
+
+    /// The folder of the games' own settings files, next to `config.ini`.
+    fn games_dir(&self) -> PathBuf {
+        launcher_dir().join("games")
+    }
+
+    /// The file of a game's own settings: `games\<id>.ini`.
+    pub fn game_settings_path(&self, game: &GameRecord) -> PathBuf {
+        game_settings_file_in(&self.games_dir(), game)
+    }
+
+    pub fn load_game_settings(&self, game: &GameRecord) -> GameSettings {
+        load_game_settings_from(&self.game_settings_path(game))
+    }
+
+    /// The game's settings file, created when it does not exist yet.
+    pub fn ensure_game_settings_file(&self, game: &GameRecord) -> io::Result<PathBuf> {
+        let path = self.game_settings_path(game);
+        create_game_settings_file(&path, &game.name)?;
+        Ok(path)
+    }
+
+    pub fn save_game_system(&self, game: &GameRecord, cfg: &SystemConfig) -> io::Result<()> {
+        save_game_system_to(&self.ensure_game_settings_file(game)?, cfg)
+    }
+
+    pub fn save_game_coin(&self, game: &GameRecord, cfg: &CoinConfig) -> io::Result<()> {
+        save_coin_to(&self.ensure_game_settings_file(game)?, cfg)
+    }
+
+    pub fn save_game_graphics(&self, game: &GameRecord, cfg: &GraphicsConfig) -> io::Result<()> {
+        save_graphics_to(&self.ensure_game_settings_file(game)?, cfg)
+    }
+
+    pub fn save_game_input(&self, game: &GameRecord, cfg: &InputConfig) -> io::Result<()> {
+        save_input_to(&self.ensure_game_settings_file(game)?, cfg)
+    }
+
+    /// Deletes a game's settings file, for a game taken out of the library.
+    pub fn remove_game_settings(&self, game: &GameRecord) {
+        let _ = fs::remove_file(self.game_settings_path(game));
+    }
+
+    /// Gives each game in `games` the settings `config.ini` kept for every game, in a file of
+    /// its own (see [`move_shared_settings`]).
+    pub fn move_shared_settings(&self, games: &[GameRecord]) -> io::Result<()> {
+        move_shared_settings(&self.config_path(), &self.games_dir(), games)
     }
 
     /// The interface language chosen in `config.ini [ui] lang`, or the system's language
@@ -838,30 +974,6 @@ impl Store {
 
     pub fn load_card(&self) -> Option<String> {
         load_card_from(&self.config_path())
-    }
-
-    pub fn load_coin(&self) -> CoinConfig {
-        load_coin_from(&self.config_path())
-    }
-
-    pub fn save_coin(&self, cfg: &CoinConfig) -> io::Result<()> {
-        save_coin_to(&self.config_path(), cfg)
-    }
-
-    pub fn load_graphics(&self) -> GraphicsConfig {
-        load_graphics_from(&self.config_path())
-    }
-
-    pub fn save_graphics(&self, cfg: &GraphicsConfig) -> io::Result<()> {
-        save_graphics_to(&self.config_path(), cfg)
-    }
-
-    pub fn load_input(&self) -> InputConfig {
-        load_input_from(&self.config_path())
-    }
-
-    pub fn save_input(&self, cfg: &InputConfig) -> io::Result<()> {
-        save_input_to(&self.config_path(), cfg)
     }
 
     pub fn remove_image(&self, id: &str) {
@@ -923,44 +1035,102 @@ mod tests {
     }
 
     #[test]
-    fn system_config_roundtrip() {
+    fn game_system_config_roundtrip() {
         let path = temp_config("system_roundtrip.ini");
         fs::remove_file(&path).ok();
 
-        assert_eq!(load_system_from(&path), SystemConfig::default());
+        assert_eq!(load_game_settings_from(&path), GameSettings::default());
 
         let cfg = SystemConfig {
             loglevel: Some("debug".into()),
-            region: Some("JPN".into()),
-            keychip: Some("A69E-01A99999999".into()),
             skip_reader_init: Some(true),
             auto_insert_card: Some(true),
             seat: Some("A1".into()),
             master: Some(false),
+            ..Default::default()
         };
-        save_system_to(&path, &cfg).unwrap();
-        assert_eq!(load_system_from(&path), cfg);
+        save_game_system_to(&path, &cfg).unwrap();
+        assert_eq!(load_game_settings_from(&path).system, cfg);
 
-        save_system_to(
-            &path,
-            &SystemConfig {
-                region: Some("EXP".into()),
-                ..Default::default()
-            },
-        )
-        .unwrap();
-        let loaded = load_system_from(&path);
-        assert_eq!(loaded.region, Some("EXP".into()));
+        save_game_system_to(&path, &SystemConfig { seat: Some("B2".into()), ..Default::default() }).unwrap();
+        let loaded = load_game_settings_from(&path).system;
+        assert_eq!(loaded.seat, Some("B2".into()));
         assert_eq!(loaded.loglevel, None);
-        assert_eq!(loaded.keychip, None);
         assert_eq!(loaded.skip_reader_init, None);
-        assert_eq!(loaded.auto_insert_card, None);
 
-        fs::write(&path, "[system]\nskip_reader_init = true\n").unwrap();
-        let loaded = load_system_from(&path);
+        // The keychip and the region are the launcher's, not the game's.
+        fs::write(&path, "[system]\nkeychip = A69E-01A99999999\nregion = JPN\nskip_reader_init = true\n").unwrap();
+        let loaded = load_game_settings_from(&path).system;
         assert_eq!(loaded.skip_reader_init, Some(true));
+        assert_eq!(loaded.keychip, None);
+        assert_eq!(loaded.region, None);
 
         fs::remove_file(&path).ok();
+    }
+
+    /// A fresh folder with a `config.ini` holding settings shared by every game, as the
+    /// launcher kept them before each game had a file of its own.
+    fn shared_settings_folder(name: &str) -> (PathBuf, PathBuf, PathBuf) {
+        let dir = temp_config(name);
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        let config = dir.join("config.ini");
+        fs::write(
+            &config,
+            "; Sasayaki Launcher settings\n[system]\nloglevel = debug\nkeychip = A69E-01A99999999\nseat = A1\n\
+             [input]\ntype = dinput\nratio = 200\n[network]\nip = 192.168.1.0/24\n[graphics]\nborderless = 1\n",
+        )
+        .unwrap();
+        (dir.clone(), config, dir.join("games"))
+    }
+
+    fn game(id: &str) -> GameRecord {
+        GameRecord { id: id.into(), ..crate::games::test_input::record(Loader::Kitten, Some("SBQZ")) }
+    }
+
+    #[test]
+    fn shared_settings_move_into_each_game() {
+        let (dir, config, games_dir) = shared_settings_folder("move_shared");
+        let games = [game("one"), game("two")];
+        move_shared_settings(&config, &games_dir, &games).unwrap();
+
+        for g in &games {
+            let saved = load_game_settings_from(&game_settings_file_in(&games_dir, g));
+            assert_eq!(saved.input.kind.as_deref(), Some("dinput"));
+            assert_eq!(saved.input.ratio, Some(200));
+            assert_eq!(saved.graphics.borderless, Some(true));
+            assert_eq!(saved.system.loglevel.as_deref(), Some("debug"));
+            assert_eq!(saved.system.seat.as_deref(), Some("A1"));
+        }
+        let left = fs::read_to_string(&config).unwrap();
+        assert_eq!(
+            left,
+            "; Sasayaki Launcher settings\n[system]\nkeychip = A69E-01A99999999\n[network]\nip = 192.168.1.0/24\n",
+            "only the launcher's own settings stay"
+        );
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_game_with_its_own_file_keeps_it() {
+        let (dir, config, games_dir) = shared_settings_folder("move_keeps_own");
+        let own = game("own");
+        fs::create_dir_all(&games_dir).unwrap();
+        fs::write(game_settings_file_in(&games_dir, &own), "[input]\ntype = xinput\n").unwrap();
+
+        move_shared_settings(&config, &games_dir, &[own.clone(), game("new")]).unwrap();
+        assert_eq!(load_game_settings_from(&game_settings_file_in(&games_dir, &own)).input.kind.as_deref(), Some("xinput"));
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn without_games_the_shared_settings_wait_for_the_first() {
+        let (dir, config, games_dir) = shared_settings_folder("move_no_games");
+        let before = fs::read_to_string(&config).unwrap();
+        move_shared_settings(&config, &games_dir, &[]).unwrap();
+        assert_eq!(fs::read_to_string(&config).unwrap(), before);
+        assert!(!games_dir.exists());
+        let _ = fs::remove_dir_all(&dir);
     }
 
     #[test]

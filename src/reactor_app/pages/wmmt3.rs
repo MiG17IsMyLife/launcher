@@ -1,126 +1,91 @@
-//! The WMMT3 parts of the interface: the Input page's tab for Wangan Midnight Maximum Tune 3
-//! and the WMMT3 settings page opened from a WMMT3 game's row. Both are drawn from the table
-//! in `games::wmmt3::settings`, one row per setting, its control chosen by the setting's kind.
+//! The WMMT3 tabs of a game's settings page: its Graphics, System and Input tabs for
+//! Wangan Midnight Maximum Tune 3 / 3DX / 3DX+. They are drawn from the table in
+//! `games::wmmt3::settings`, one row per setting, its control chosen by the setting's kind.
 
 use windows_reactor::*;
 
 use rust_i18n::t;
 
-use crate::games::wmmt3::settings::{self, AXES, KEYS, Kind, Label, Section, Setting, XINPUT_BUTTONS};
+use crate::games::wmmt3::settings::{self, KEYS, Kind, Label, Section, Setting, XINPUT_BUTTONS};
 use crate::rawinput;
 use crate::reactor_app::Launcher;
 use crate::reactor_app::message::{Dialog, Message};
-use crate::reactor_app::widgets::{binding_label, separator, settings_row, settings_section, settings_toggle};
+use crate::reactor_app::widgets::{binding_label, separator, settings_card, settings_row, settings_row_sub, settings_section, settings_toggle};
 
 use super::input::INPUT_CAPTURE_SECS;
 
-/// The game whose settings the Input page shows.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub(in crate::reactor_app) enum InputTab {
-    #[default]
-    InitialD,
-    Wmmt3,
-}
-
-impl InputTab {
-    const ALL: [InputTab; 2] = [InputTab::InitialD, InputTab::Wmmt3];
-
-    fn title(self) -> String {
-        match self {
-            InputTab::InitialD => t!("wmmt3.tab_initial_d"),
-            InputTab::Wmmt3 => t!("wmmt3.tab_wmmt3"),
-        }
-        .to_string()
-    }
-}
-
 impl Launcher {
-    /// Whether the library has a WMMT3 game; only then the Input page has tabs.
-    pub(in crate::reactor_app) fn has_wmmt3_game(&self) -> bool {
-        self.library.games.iter().any(crate::games::wmmt3::is_wmmt3_game)
-    }
-
-    /// The game whose input settings the Input page shows now.
-    pub(in crate::reactor_app) fn shown_input_tab(&self) -> InputTab {
-        if self.has_wmmt3_game() { self.input_tab } else { InputTab::InitialD }
-    }
-
-    /// The tabs of the Input page, when there is more than one game to set up.
-    pub(in crate::reactor_app) fn input_tabs(&self, context: &mut ViewContext<Self>) -> Option<View> {
-        if !self.has_wmmt3_game() {
-            return None;
-        }
-        let items = InputTab::ALL.map(|tab| {
-            KeyedView::new(
-                format!("{tab:?}"),
-                SelectorBarItem::new().text(tab.title()).is_selected(self.input_tab == tab),
-            )
-        });
-        Some(
-            SelectorBar::new()
-                .on_selected_text_changed(context.callback(Message::InputTabSelected))
-                .collection_slot(SelectorBarSlot::Items, items)
-                .into(),
-        )
-    }
-
-    /// The Input page's sections on the WMMT3 tab.
-    pub(in crate::reactor_app) fn wmmt3_input_sections(&self, context: &mut ViewContext<Self>) -> Vec<KeyedView> {
-        self.wmmt3_sections(context, settings::INPUT_SECTIONS)
-    }
-
-    /// The WMMT3 settings page, opened from a WMMT3 game's row.
-    pub(in crate::reactor_app) fn wmmt3_settings_page(&self, context: &mut ViewContext<Self>) -> View {
-        let header: View = StackPanel::new()
-            .orientation(Orientation::Horizontal)
-            .spacing(12.0)
-            .children((
-                Button::new()
-                    .style(ButtonStyle::Subtle)
-                    .on_click(context.message(Message::BackToGames))
-                    .vertical_alignment(VerticalAlignment::Center)
-                    .content(SymbolIcon::new().symbol(Symbol::Back)),
-                TextBlock::new()
-                    .text(t!("wmmt3.settings_title"))
-                    .font_size(26.0)
-                    .font_weight(FontWeight::SEMI_BOLD)
-                    .vertical_alignment(VerticalAlignment::Center),
-            ))
-            .into();
-        ScrollViewer::new()
-            .vertical_scroll_bar_visibility(ScrollBarVisibility::Auto)
-            .content(
-                StackPanel::new()
-                    .horizontal_alignment(HorizontalAlignment::Stretch)
-                    .margin(Thickness::new(28.0, 20.0, 28.0, 16.0))
-                    .spacing(4.0)
-                    .children((
-                        header,
-                        StackPanel::new()
-                            .horizontal_alignment(HorizontalAlignment::Stretch)
-                            .keyed_children(self.wmmt3_sections(context, settings::PAGE_SECTIONS)),
-                    )),
-            )
-            .into()
-    }
-
-    /// The sections that apply to the input mode in use, each with a row per setting.
-    fn wmmt3_sections(&self, context: &mut ViewContext<Self>, sections: &'static [Section]) -> Vec<KeyedView> {
-        let mode = self.wmmt3.input_mode().to_string();
+    /// The sections that apply to the input mode in use, each with a row per setting that has
+    /// an effect.
+    pub(in crate::reactor_app) fn wmmt3_sections(&self, context: &mut ViewContext<Self>, sections: &'static [Section]) -> Vec<KeyedView> {
+        let mode = self.wmmt3.input_mode();
+        let game_id = self.settings_game().and_then(|g| g.game_id.as_deref());
         sections
             .iter()
             .filter(|section| section.input_mode.is_none_or(|m| m == mode))
             .map(|section| {
+                let switched_on = section.switch.is_none_or(|switch| self.wmmt3.is_on(switch));
                 let mut rows = Vec::new();
-                for (i, setting) in section.settings.iter().enumerate() {
-                    if i > 0 {
-                        rows.push(KeyedView::new(format!("sep-{}", setting.key), separator()));
+                if switched_on {
+                    let shown = section.settings.iter().filter(|s| self.wmmt3.applies(s, game_id));
+                    for setting in shown {
+                        if !rows.is_empty() {
+                            rows.push(KeyedView::new(format!("sep-{}", setting.key), separator()));
+                        }
+                        rows.push(KeyedView::new(setting.key, self.wmmt3_setting_row(context, setting)));
                     }
-                    rows.push(KeyedView::new(setting.key, self.wmmt3_setting_row(context, setting)));
                 }
-                KeyedView::new(section.title, settings_section(&t!(section.title), rows))
+                let view = match section.switch {
+                    Some(switch) => self.wmmt3_switched_section(context, section.title, switch, rows),
+                    None => settings_section(&t!(section.title), rows),
+                };
+                KeyedView::new(section.title, view)
             })
             .collect()
+    }
+
+    /// A section with its switch in the heading, as the Initial D force feedback card: the
+    /// title and the switch on the card's first row, the section's rows below while it is on.
+    fn wmmt3_switched_section(
+        &self,
+        context: &mut ViewContext<Self>,
+        title: &'static str,
+        switch: &'static Setting,
+        rows: Vec<KeyedView>,
+    ) -> View {
+        let key = switch.key;
+        // The title is bold, as a heading, unlike the rows below; otherwise a settings row.
+        let heading: View = Grid::new()
+            .margin(Thickness::new(16.0, 12.0, 16.0, 12.0))
+            .columns([GridLength::Star(1.0), GridLength::Auto])
+            .children((
+                StackPanel::new()
+                    .orientation(Orientation::Horizontal)
+                    .spacing(14.0)
+                    .vertical_alignment(VerticalAlignment::Center)
+                    .grid_column(0)
+                    .children((
+                        SymbolIcon::new().symbol(Symbol::Rotate),
+                        TextBlock::new().text(t!(title)).font_size(14.0).font_weight(FontWeight::SEMI_BOLD),
+                    )),
+                StackPanel::new().vertical_alignment(VerticalAlignment::Center).grid_column(1).children((
+                    settings_toggle(
+                        self.wmmt3.is_on(switch),
+                        true,
+                        context.callback(move |on: bool| Message::Wmmt3SettingChanged(key, Some(on.to_string()))),
+                    ),
+                )),
+            ))
+            .into();
+        let mut children = vec![KeyedView::new("heading", heading)];
+        if !rows.is_empty() {
+            children.push(KeyedView::new("sep-heading", separator()));
+            children.extend(rows);
+        }
+        StackPanel::new()
+            .margin(Thickness::new(0.0, 16.0, 0.0, 0.0))
+            .children((settings_card(children),))
+            .into()
     }
 
     /// The row of one setting: its name, and the control its kind calls for.
@@ -141,10 +106,7 @@ impl Launcher {
                 let values: Vec<&'static str> = items.iter().map(|(v, _)| *v).collect();
                 choice_box(context, labels, values, &value, key)
             }
-            Kind::Axis => {
-                let labels = AXES.iter().map(|a| a.to_string()).collect();
-                choice_box(context, labels, AXES.to_vec(), &value, key)
-            }
+            Kind::Axis { reverse } => return self.wmmt3_axis_row(context, setting, reverse),
             Kind::Key => {
                 let labels = KEYS.iter().map(|(v, name)| if *v == "0x00" { unbound() } else { name.to_string() }).collect();
                 let values: Vec<&'static str> = KEYS.iter().map(|(v, _)| *v).collect();
@@ -177,7 +139,7 @@ impl Launcher {
                     .into();
                 with_capture(context, binding, key)
             }
-            Kind::Device => {
+            Kind::Device { empty } => {
                 let mut values: Vec<String> = vec![String::new()];
                 values.extend(self.wmmt3_devices.iter().map(|d| d.name.clone()));
                 if !values.contains(&value) {
@@ -185,7 +147,7 @@ impl Launcher {
                 }
                 let labels: Vec<String> = values
                     .iter()
-                    .map(|v| if v.is_empty() { t!("wmmt3.device_default").to_string() } else { v.clone() })
+                    .map(|v| if v.is_empty() { t!(*empty).to_string() } else { v.clone() })
                     .collect();
                 let selected = values.iter().position(|v| *v == value);
                 ComboBox::new()
@@ -207,18 +169,39 @@ impl Launcher {
         settings_row(SymbolIcon::new().symbol(Symbol::Setting).into(), &t!(setting.label), control)
     }
 
-    /// Handles the messages of the WMMT3 tab and page; hands the others back.
+    /// An axis's row, as on the Initial D Input tab: the axis in use under its name, a check
+    /// box that turns it around, and a button that captures it from the device.
+    fn wmmt3_axis_row(&self, context: &mut ViewContext<Self>, setting: &'static Setting, reverse: &'static Setting) -> View {
+        let key = setting.key;
+        let reverse_key = reverse.key;
+        let controls: View = StackPanel::new()
+            .orientation(Orientation::Horizontal)
+            .spacing(12.0)
+            .vertical_alignment(VerticalAlignment::Center)
+            .children((
+                CheckBox::new()
+                    .is_checked(self.wmmt3.is_on(reverse))
+                    .on_is_checked_changed(context.callback(move |on: bool| {
+                        Message::Wmmt3SettingChanged(reverse_key, Some(on.to_string()))
+                    }))
+                    .vertical_alignment(VerticalAlignment::Center)
+                    .content(t!("page_input.reverse_axis").to_string()),
+                Button::new()
+                    .on_click(context.message(Message::Wmmt3CaptureStart(key)))
+                    .content(t!("page_input.capture").to_string()),
+            ))
+            .into();
+        settings_row_sub(
+            SymbolIcon::new().symbol(Symbol::Accept).into(),
+            &t!(setting.label),
+            Some(t!("page_input.axis", axis = self.wmmt3.value(setting)).to_string()),
+            controls,
+        )
+    }
+
+    /// Handles the messages of the WMMT3 tabs; hands the others back.
     pub(in crate::reactor_app) fn handle_wmmt3(&mut self, message: Message, context: &ComponentContext<Self>) -> Option<Message> {
         match message {
-            Message::InputTabSelected(Some(title)) => {
-                if let Some(tab) = InputTab::ALL.into_iter().find(|tab| tab.title() == title) {
-                    self.input_tab = tab;
-                    if tab == InputTab::Wmmt3 {
-                        self.scan_wmmt3_devices(context);
-                    }
-                }
-            }
-            Message::InputTabSelected(None) => {}
             Message::Wmmt3SettingChanged(key, Some(value)) => self.set_wmmt3(key, value),
             Message::Wmmt3SettingChanged(_, None) => {}
             Message::Wmmt3CaptureStart(key) => self.start_wmmt3_capture(key, context),
@@ -228,10 +211,10 @@ impl Launcher {
                     self.set_wmmt3(key, value);
                 }
             }
-            Message::Wmmt3CapturedDpad(epoch) => {
+            Message::Wmmt3CaptureUnusable(epoch, reason) => {
                 if epoch == self.input_capture_gen {
                     self.end_capture();
-                    self.dialog = Dialog::Error { message: t!("wmmt3.dpad_not_assignable").to_string() };
+                    self.dialog = Dialog::Error { message: t!(reason).to_string() };
                 }
             }
             Message::Wmmt3DevicesScanned(devices) => self.wmmt3_devices = *devices,
@@ -240,12 +223,12 @@ impl Launcher {
         None
     }
 
-    /// Looks for DirectInput devices to offer on the WMMT3 tab.
+    /// Looks for DirectInput devices to offer on the WMMT3 Input tab.
     pub(in crate::reactor_app) fn scan_wmmt3_devices(&self, context: &ComponentContext<Self>) {
         context.spawn_background(|_| Message::Wmmt3DevicesScanned(Box::new(rawinput::list_game_devices())));
     }
 
-    /// Saves a WMMT3 setting, unless it already has that value.
+    /// Saves a WMMT3 setting into the game's settings file, unless it already has that value.
     fn set_wmmt3(&mut self, key: &str, value: String) {
         let Some(setting) = settings::find(key) else {
             return;
@@ -253,19 +236,21 @@ impl Launcher {
         if self.wmmt3.value(setting) == value {
             return;
         }
-        if let Err(e) = self.wmmt3.set(&self.store.config_path(), setting, value) {
-            self.dialog = Dialog::Error {
-                message: t!("common.failed_to_save_config_ini", error = e).to_string(),
-            };
-        }
+        let Some(file) = self.settings_game().map(|game| self.store.ensure_game_settings_file(game)) else {
+            return;
+        };
+        let result = file.and_then(|path| self.wmmt3.set(&path, setting, value));
+        self.report_save(result);
     }
 
-    /// Waits for a button on the device of the input mode in use and binds it to `key`.
+    /// Waits for a button (or for an axis, for an axis setting) on the device of the input
+    /// mode in use and binds it to `key`.
     fn start_wmmt3_capture(&mut self, key: &'static str, context: &ComponentContext<Self>) {
         let Some(setting) = settings::find(key) else {
             return;
         };
         let xinput = matches!(setting.kind, Kind::XinputButton);
+        let axis = matches!(setting.kind, Kind::Axis { .. });
         let pad = settings::find("xinput_device")
             .and_then(|s| self.wmmt3.value(s).parse::<u32>().ok())
             .unwrap_or(0);
@@ -285,10 +270,20 @@ impl Launcher {
                     None => Message::InputCaptureTimeout(epoch),
                 };
             }
+            if axis {
+                // KittenTools reads the axis DirectInput makes of the control that moved.
+                return match rawinput::capture_axis(timeout_ms) {
+                    Some(c) => match c.dinput {
+                        Some(name) => Message::Wmmt3Captured(epoch, key, name.to_string()),
+                        None => Message::Wmmt3CaptureUnusable(epoch, "wmmt3.axis_not_assignable"),
+                    },
+                    None => Message::InputCaptureTimeout(epoch),
+                };
+            }
             match rawinput::capture_button(timeout_ms) {
                 // KittenTools moves the lever with the wheel's POV hat by itself; a hat
                 // direction is not a button it can bind.
-                Some(c) if c.is_dpad => Message::Wmmt3CapturedDpad(epoch),
+                Some(c) if c.is_dpad => Message::Wmmt3CaptureUnusable(epoch, "wmmt3.dpad_not_assignable"),
                 Some(c) => Message::Wmmt3Captured(epoch, key, c.button.to_string()),
                 None => Message::InputCaptureTimeout(epoch),
             }

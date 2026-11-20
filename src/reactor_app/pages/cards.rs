@@ -62,6 +62,9 @@ pub(in crate::reactor_app) const COVER_ASSETS: &[(&str, &[u8])] = &[
     ("logo_D8.png", include_bytes!("../../assets/logo_D8.png")),
     ("logo_dac.png", include_bytes!("../../assets/logo_dac.png")),
     ("logo_idz.png", include_bytes!("../../assets/logo_idz.png")),
+    ("logo_wm3.png", include_bytes!("../../assets/logo_wm3.png")),
+    ("logo_wm3dx.png", include_bytes!("../../assets/logo_wm3dx.png")),
+    ("logo_wm3dxplus.png", include_bytes!("../../assets/logo_wm3dxplus.png")),
 
     ("logo_D4_big.png", include_bytes!("../../assets/logo_D4_big.png")),
     ("logo_D4kai_big.png", include_bytes!("../../assets/logo_D4kai_big.png")),
@@ -73,6 +76,9 @@ pub(in crate::reactor_app) const COVER_ASSETS: &[(&str, &[u8])] = &[
     ("logo_D8_big.png", include_bytes!("../../assets/logo_D8_big.png")),
     ("logo_dac_big.png", include_bytes!("../../assets/logo_dac_big.png")),
     ("logo_idz_big.png", include_bytes!("../../assets/logo_idz_big.png")),
+    ("logo_wm3_big.png", include_bytes!("../../assets/logo_wm3_big.png")),
+    ("logo_wm3dx_big.png", include_bytes!("../../assets/logo_wm3dx_big.png")),
+    ("logo_wm3dxplus_big.png", include_bytes!("../../assets/logo_wm3dxplus_big.png")),
 ];
 
 pub(in crate::reactor_app) const CARD_CAR_OFFSET_X: i64 = 0;

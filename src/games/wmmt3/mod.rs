@@ -4,9 +4,9 @@
 //! write the launcher's settings into `kitten\config.ini`, then start `kitten.exe -b main`.
 //!
 //! KittenTools keeps every setting of these games in the `[wmmt3]` section of its
-//! `config.ini`, apart from `[sysconf] log_level`. The launcher offers them on the Input
-//! page's WMMT3 tab and on the WMMT3 settings page ([`settings`]), and writes only the ones
-//! set there; the rest of the file stays as it is, so it can still be edited by hand.
+//! `config.ini`, apart from `[sysconf] log_level`. The launcher offers them on the game's
+//! settings page ([`settings`]), and writes only the ones set there; the rest of the file
+//! stays as it is, so it can still be edited by hand.
 //!
 //! These games need no keychip, region or subnet, and have no card reader program, no
 //! ServerBox and no test mode switch (the test button is a key). Linked play is not offered
@@ -18,7 +18,7 @@ use std::process::Child;
 use rust_i18n::t;
 
 use super::{
-    CardKind, GameFamily, LaunchInput, LaunchProblem, Prepared, Started, UiFeatures, game_dir_of,
+    CardKind, GameFamily, LaunchInput, LaunchProblem, Prepared, Series, SettingsKind, Started, UiFeatures, game_dir_of,
 };
 use crate::ini;
 use crate::loaders::{self, kitten};
@@ -51,7 +51,8 @@ impl GameFamily for Wmmt3 {
             companion_executables: false,
             region: false,
             cards: false,
-            game_settings: true,
+            settings: SettingsKind::Wmmt3,
+            series: Series::WanganMidnight,
             card_extension: "bin",
         }
     }
@@ -94,8 +95,8 @@ impl GameFamily for Wmmt3 {
     }
 }
 
-/// The keys of kitten's `config.ini` the launcher sets for these games: the log level of
-/// the System page, and every WMMT3 setting set in the launcher.
+/// The keys of kitten's `config.ini` the launcher sets for these games: the log level, and
+/// every WMMT3 setting set in the launcher.
 fn config_keys(input: &LaunchInput) -> Vec<(&'static str, &'static str, String)> {
     let mut keys = Vec::new();
     if let Some(level) = input.system.loglevel.as_deref().and_then(kitten::log_level_num) {

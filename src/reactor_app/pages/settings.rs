@@ -11,7 +11,7 @@ use crate::update::{self, TargetStatus, UpdateIndex, UpdatePhase, UpdateState, U
 
 use crate::reactor_app::Launcher;
 use crate::reactor_app::message::{Dialog, Message};
-use crate::reactor_app::widgets::{separator, settings_row, settings_toggle};
+use crate::reactor_app::widgets::{separator, settings_card, settings_row, settings_toggle};
 
 const COLOR_GREY: Color = Color::argb(255, 0x9E, 0x9E, 0x9E);
 const COLOR_OK: Color = Color::argb(255, 0x6C, 0xCB, 0x5F);
@@ -405,6 +405,15 @@ impl Launcher {
             .into()
     }
 
+    /// Saves the keychip, which is the launcher's, into `config.ini`.
+    pub(in crate::reactor_app) fn save_keychip(&mut self) {
+        if let Err(e) = self.store.save_keychip(self.keychip.as_deref()) {
+            self.dialog = Dialog::Error {
+                message: t!("common.failed_to_save_config_ini", error = e).to_string(),
+            };
+        }
+    }
+
     pub(in crate::reactor_app) fn settings_page(&self, context: &mut ViewContext<Self>) -> View {
         // Each language is listed by its own name, so it can be found whatever is shown now.
         let lang_items: Vec<String> = Lang::ALL.iter().map(|l| l.native_name().to_string()).collect();
@@ -472,6 +481,20 @@ impl Launcher {
                         .vertical_alignment(VerticalAlignment::Center),
                 ),
             ));
+
+        // The keychip names this PC to the server and in the rooms, whatever game it runs.
+        let keychip_row = settings_row(
+            SymbolIcon::new().symbol(Symbol::Admin).into(),
+            "Keychip",
+            TextBox::new()
+                .width(225.0)
+                .text(self.keychip.clone().unwrap_or_default())
+                .placeholder_text("A69E-01A99999999")
+                .on_text_changed(context.callback(Message::KeychipChanged))
+                .vertical_alignment(VerticalAlignment::Center)
+                .into(),
+        );
+        let keychip_card = settings_card(vec![KeyedView::new("keychip", keychip_row)]);
 
         let nick_card = Border::new()
             .horizontal_alignment(HorizontalAlignment::Stretch)
@@ -558,6 +581,7 @@ impl Launcher {
                         version_card,
                         lang_card,
                         server_card,
+                        keychip_card,
                         nick_card,
                         update_card,
                         components_title,

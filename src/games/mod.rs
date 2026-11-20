@@ -58,8 +58,9 @@ pub struct LaunchInput {
     pub net: NetworkConfig,
     /// The subnet saved on the Network page, as it was typed.
     pub saved_subnet: Option<String>,
-    /// The System page's settings, with the game row's region.
+    /// The game's own system settings, with the launcher's keychip and the game row's region.
     pub system: SystemConfig,
+    /// The game's own coin, graphics and input settings.
     pub coin: CoinConfig,
     pub graphics: GraphicsConfig,
     pub input: InputConfig,
@@ -71,7 +72,7 @@ pub struct LaunchInput {
     pub room_seat: Option<RoomSeat>,
     /// The adapter that gets the ServerBox address when the game needs one.
     pub serverbox_adapter: Option<String>,
-    /// The settings of the WMMT3 games (Input page tab and WMMT3 settings page).
+    /// The game's own WMMT3 settings, for the WMMT3 games.
     pub wmmt3: Wmmt3Settings,
 }
 
@@ -97,8 +98,10 @@ pub enum Fix {
     GameRow,
     /// The game's card selection.
     Cards,
-    System,
+    /// The keychip, on the Settings page.
+    Keychip,
     Network,
+    /// The Input tab of the game's settings page.
     Input,
 }
 
@@ -149,10 +152,28 @@ pub struct UiFeatures {
     pub region: bool,
     /// The game's card is chosen on the card page.
     pub cards: bool,
-    /// The game has a settings page of its own, opened from its row.
-    pub game_settings: bool,
+    /// The settings the game's settings page offers.
+    pub settings: SettingsKind,
+    /// The series the Games page lists the game under.
+    pub series: Series,
     /// The extension shown for the selected card in the game row.
     pub card_extension: &'static str,
+}
+
+/// A series of games, which the Games page lists apart, in this order.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub enum Series {
+    InitialD,
+    WanganMidnight,
+}
+
+/// The settings a game's settings page offers (on its Graphics, System and Input tabs).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SettingsKind {
+    /// Those of the Initial D games, which their loaders share.
+    InitialD,
+    /// KittenTools' `[wmmt3]` settings ([`wmmt3::settings`]).
+    Wmmt3,
 }
 
 /// Card format and artwork used by the card page.
@@ -233,7 +254,7 @@ pub fn launch_serverbox(input: &LaunchInput) -> Result<Child, LaunchProblem> {
         return Err(LaunchProblem::needs(t!("page_launch.network_subnet_is_not_configured"), Fix::Network));
     }
     if is_blank(&input.system.keychip) {
-        return Err(LaunchProblem::needs(t!("page_launch.keychip_serial_is_not_set"), Fix::System));
+        return Err(LaunchProblem::needs(t!("page_launch.keychip_serial_is_not_set"), Fix::Keychip));
     }
     family_of(&input.record)
         .launch_serverbox(input)
@@ -247,7 +268,7 @@ fn check_initial_d_settings(input: &LaunchInput, network_configured: bool) -> Re
         return Err(LaunchProblem::needs(t!("page_launch.region_is_not_set"), Fix::GameRow));
     }
     if is_blank(&input.system.keychip) {
-        return Err(LaunchProblem::needs(t!("page_launch.keychip_serial_is_not_set"), Fix::System));
+        return Err(LaunchProblem::needs(t!("page_launch.keychip_serial_is_not_set"), Fix::Keychip));
     }
     if !network_configured {
         return Err(LaunchProblem::needs(t!("page_launch.network_subnet_is_not_configured"), Fix::Network));
@@ -340,12 +361,12 @@ mod tests {
     #[test]
     fn ui_features_match_existing_game_rows() {
         let cases = [
-            (Loader::Kitten, Some("SBQZ"), UiFeatures { test_mode: true, graphics_patch: false, region: true, cards: true, game_settings: false, companion_executables: false, card_extension: "png" }),
-            (Loader::Mice, Some("SBZZ"), UiFeatures { test_mode: true, graphics_patch: true, region: true, cards: true, game_settings: false, companion_executables: false, card_extension: "png" }),
-            (Loader::Segatools, Some("SDGT"), UiFeatures { test_mode: false, graphics_patch: false, region: true, cards: true, game_settings: false, companion_executables: true, card_extension: "txt" }),
-            (Loader::Segatools, Some("SDDF"), UiFeatures { test_mode: false, graphics_patch: false, region: true, cards: true, game_settings: false, companion_executables: true, card_extension: "txt" }),
-            (Loader::Segatools, None, UiFeatures { test_mode: false, graphics_patch: false, region: true, cards: true, game_settings: false, companion_executables: true, card_extension: "txt" }),
-            (Loader::Kitten, Some("W3P"), UiFeatures { test_mode: false, graphics_patch: false, region: false, cards: false, game_settings: true, companion_executables: false, card_extension: "bin" }),
+            (Loader::Kitten, Some("SBQZ"), UiFeatures { test_mode: true, graphics_patch: false, region: true, cards: true, settings: SettingsKind::InitialD, series: Series::InitialD, companion_executables: false, card_extension: "png" }),
+            (Loader::Mice, Some("SBZZ"), UiFeatures { test_mode: true, graphics_patch: true, region: true, cards: true, settings: SettingsKind::InitialD, series: Series::InitialD, companion_executables: false, card_extension: "png" }),
+            (Loader::Segatools, Some("SDGT"), UiFeatures { test_mode: false, graphics_patch: false, region: true, cards: true, settings: SettingsKind::InitialD, series: Series::InitialD, companion_executables: true, card_extension: "txt" }),
+            (Loader::Segatools, Some("SDDF"), UiFeatures { test_mode: false, graphics_patch: false, region: true, cards: true, settings: SettingsKind::InitialD, series: Series::InitialD, companion_executables: true, card_extension: "txt" }),
+            (Loader::Segatools, None, UiFeatures { test_mode: false, graphics_patch: false, region: true, cards: true, settings: SettingsKind::InitialD, series: Series::InitialD, companion_executables: true, card_extension: "txt" }),
+            (Loader::Kitten, Some("W3P"), UiFeatures { test_mode: false, graphics_patch: false, region: false, cards: false, settings: SettingsKind::Wmmt3, series: Series::WanganMidnight, companion_executables: false, card_extension: "bin" }),
         ];
         for (loader, id, expected) in cases {
             let rec = record(loader, id);

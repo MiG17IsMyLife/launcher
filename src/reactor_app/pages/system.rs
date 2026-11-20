@@ -3,10 +3,11 @@ use windows_reactor::*;
 use rust_i18n::t;
 
 use crate::reactor_app::Launcher;
-use crate::reactor_app::message::{Dialog, Message};
-use crate::reactor_app::widgets::{separator, settings_row, settings_toggle, spawn_anim_tick};
+use crate::reactor_app::message::Message;
+use crate::reactor_app::widgets::{separator, settings_card, settings_row, settings_toggle, spawn_anim_tick};
 
-/// The log levels offered: the value stored in config.ini and the text key of its label.
+/// The log levels offered: the value stored in the game's settings file and the text key of
+/// its label.
 pub(in crate::reactor_app) const SYS_LOGLEVELS: &[(Option<&str>, &str)] = &[
     (Some("info"), "page_system.log_level_info"),
     (Some("error"), "page_system.log_level_error"),
@@ -15,7 +16,8 @@ pub(in crate::reactor_app) const SYS_LOGLEVELS: &[(Option<&str>, &str)] = &[
     (Some("trace"), "page_system.log_level_trace"),
 ];
 
-/// The cabinet seats: the value stored in config.ini and the text key of its label.
+/// The cabinet seats: the value stored in the game's settings file and the text key of its
+/// label.
 pub(in crate::reactor_app) const SYS_SEATS: &[(&str, &str)] = &[
     ("SINGLE", "page_system.seat_single"),
     ("A1", "page_system.seat_a1"),
@@ -26,20 +28,47 @@ pub(in crate::reactor_app) const SYS_SEATS: &[(&str, &str)] = &[
 
 impl Launcher {
 
+    /// Saves the system settings into the file of the game whose settings page is open.
     pub(in crate::reactor_app) fn save_system(&mut self) {
-        if let Err(e) = self.store.save_system(&self.system) {
-            self.dialog = Dialog::Error {
-                message: t!("common.failed_to_save_config_ini", error = e).to_string(),
-            };
+        if let Some(game) = self.settings_game() {
+            let result = self.store.save_game_system(game, &self.system);
+            self.report_save(result);
         }
     }
 
+    /// Saves the coin settings into the file of the game whose settings page is open.
     pub(in crate::reactor_app) fn save_coin(&mut self) {
-        if let Err(e) = self.store.save_coin(&self.coin) {
-            self.dialog = Dialog::Error {
-                message: t!("common.failed_to_save_config_ini", error = e).to_string(),
-            };
+        if let Some(game) = self.settings_game() {
+            let result = self.store.save_game_coin(game, &self.coin);
+            self.report_save(result);
         }
+    }
+
+    /// The row choosing the loader's log level.
+    fn log_level_row(&self, context: &mut ViewContext<Self>) -> View {
+        let items: Vec<String> = SYS_LOGLEVELS.iter().map(|&(_, label)| t!(label).to_string()).collect();
+        let selected = SYS_LOGLEVELS
+            .iter()
+            .position(|(v, _)| *v == self.system.loglevel.as_deref())
+            .or(Some(0));
+        settings_row(
+            SymbolIcon::new().symbol(Symbol::List).into(),
+            &t!("page_system.log_level"),
+            ComboBox::new()
+                .width(180.0)
+                .items_source(items)
+                .selected_index(selected)
+                .on_selection_changed(context.callback(Message::LogLevelSelected))
+                .vertical_alignment(VerticalAlignment::Center)
+                .into(),
+        )
+    }
+
+    /// The log level row on a card of its own, for the games whose System tab has no other
+    /// setting of this page.
+    pub(in crate::reactor_app) fn log_level_card(&self, context: &mut ViewContext<Self>) -> View {
+        let card = settings_card(vec![KeyedView::new("log-level", self.log_level_row(context))]);
+        StackPanel::new().margin(Thickness::new(0.0, 16.0, 0.0, 0.0)).children((card,)).into()
     }
 
     pub(in crate::reactor_app) fn toggle_coin_expander(&mut self, context: &ComponentContext<Self>) {
@@ -69,17 +98,8 @@ impl Launcher {
         }
     }
 
-    pub(in crate::reactor_app) fn system_page(&self, context: &mut ViewContext<Self>) -> View {
-
-        let loglevel_items: Vec<String> = SYS_LOGLEVELS
-            .iter()
-            .map(|&(_, label)| t!(label).to_string())
-            .collect();
-        let loglevel_idx = SYS_LOGLEVELS
-            .iter()
-            .position(|(v, _)| *v == self.system.loglevel.as_deref())
-            .or(Some(0));
-
+    /// The System tab of an Initial D game's settings page.
+    pub(in crate::reactor_app) fn system_settings(&self, context: &mut ViewContext<Self>) -> View {
         let seat_items: Vec<String> = SYS_SEATS
             .iter()
             .map(|&(_, label)| t!(label).to_string())
@@ -100,29 +120,7 @@ impl Launcher {
                 StackPanel::new()
                     .horizontal_alignment(HorizontalAlignment::Stretch)
                     .children((
-                    settings_row(
-                        SymbolIcon::new().symbol(Symbol::List).into(),
-                        &t!("page_system.log_level"),
-                        ComboBox::new()
-                            .width(180.0)
-                            .items_source(loglevel_items)
-                            .selected_index(loglevel_idx)
-                            .on_selection_changed(context.callback(Message::LogLevelSelected))
-                            .vertical_alignment(VerticalAlignment::Center)
-                            .into(),
-                    ),
-                    separator(),
-                    settings_row(
-                        SymbolIcon::new().symbol(Symbol::Admin).into(),
-                        "Keychip",
-                        TextBox::new()
-                            .width(225.0)
-                            .text(self.system.keychip.clone().unwrap_or_default())
-                            .placeholder_text("A69E-01A99999999")
-                            .on_text_changed(context.callback(Message::KeychipChanged))
-                            .vertical_alignment(VerticalAlignment::Center)
-                            .into(),
-                    ),
+                    self.log_level_row(context),
                     separator(),
                     settings_row(
                         SymbolIcon::new().symbol(Symbol::Contact).into(),
@@ -308,23 +306,10 @@ impl Launcher {
                     .keyed_children(coin_rows),
             );
 
-        ScrollViewer::new()
-            .vertical_scroll_bar_visibility(ScrollBarVisibility::Auto)
-            .content(
-                StackPanel::new()
-                    .horizontal_alignment(HorizontalAlignment::Stretch)
-                    .margin(Thickness::new(28.0, 20.0, 28.0, 16.0))
-                    .spacing(4.0)
-                    .children((
-                        StackPanel::new()
-                            .children([TextBlock::new()
-                                .text(t!("nav.system"))
-                                .font_size(26.0)
-                                .font_weight(FontWeight::SEMI_BOLD)]),
-                        card,
-                        coin_card,
-                    )),
-            )
+        StackPanel::new()
+            .horizontal_alignment(HorizontalAlignment::Stretch)
+            .spacing(4.0)
+            .children((card, coin_card))
             .into()
     }
 

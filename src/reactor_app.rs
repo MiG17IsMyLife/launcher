@@ -56,9 +56,20 @@ pub struct Launcher {
 
     net: storage::NetworkConfig,
 
-    system: storage::SystemConfig,
+    /// The keychip serial, the launcher's own: it also names this PC in the rooms.
+    keychip: Option<String>,
 
     lang: Lang,
+
+    /// The record id of the game whose settings page is open (or was last opened).
+    settings_game: Option<String>,
+
+    /// The tab shown on the game's settings page.
+    settings_tab: pages::game_settings::SettingsTab,
+
+    // The settings of `settings_game`, loaded from its own file when its settings page
+    // opens and saved there on every change.
+    system: storage::SystemConfig,
 
     coin: storage::CoinConfig,
 
@@ -66,13 +77,9 @@ pub struct Launcher {
 
     input: storage::InputConfig,
 
-    /// The settings of the WMMT3 games.
     wmmt3: crate::games::Wmmt3Settings,
 
-    /// The game whose settings the Input page shows.
-    input_tab: pages::wmmt3::InputTab,
-
-    /// The DirectInput devices offered on the Input page's WMMT3 tab.
+    /// The DirectInput devices offered on a WMMT3 game's Input tab.
     wmmt3_devices: Vec<rawinput::GameDevice>,
 
     vpn: VpnConfig,
@@ -244,11 +251,9 @@ impl Component for Launcher {
         let library = store.load_library();
         let settings = store.load_settings();
         let net = store.load_network();
-        let system = store.load_system();
-        let coin = store.load_coin();
-        let graphics = store.load_graphics();
-        let input = store.load_input();
-        let wmmt3 = crate::games::Wmmt3Settings::load(&store.config_path());
+        let keychip = store.load_system().keychip;
+        // Settings config.ini kept for every game move into each game's own file.
+        let moved = store.move_shared_settings(&library.games);
         let vpn = store.load_vpn();
         let room = store.load_room();
         let lang = store.load_lang();
@@ -263,13 +268,6 @@ impl Component for Launcher {
 
         context.spawn_background(|_| Message::AdaptersScanned(Box::new(netinfo::list_adapters())));
 
-        let input_kind = input.kind.clone();
-        context.spawn_background(move |_| {
-            Message::InputDevicesScanned(Box::new(rawinput::list_input_devices(
-                input_kind.as_deref(),
-            )))
-        });
-
         let mut launcher = Launcher {
             store,
             library,
@@ -283,13 +281,15 @@ impl Component for Launcher {
             adapters: Vec::new(),
             adapters_scanned: false,
             net,
-            system,
+            keychip,
             lang,
-            coin,
-            graphics,
-            input,
-            wmmt3,
-            input_tab: pages::wmmt3::InputTab::default(),
+            settings_game: None,
+            settings_tab: pages::game_settings::SettingsTab::default(),
+            system: storage::SystemConfig::default(),
+            coin: storage::CoinConfig::default(),
+            graphics: storage::GraphicsConfig::default(),
+            input: storage::InputConfig::default(),
+            wmmt3: crate::games::Wmmt3Settings::default(),
             wmmt3_devices: Vec::new(),
             vpn,
             vpn_status: VpnStatus::NotConfigured,
@@ -379,6 +379,8 @@ impl Component for Launcher {
             window_icon: Self::prepare_window_icon(),
         };
 
+        launcher.report_moved_settings(moved);
+
         launcher.run_check(true, context);
         context.spawn_background(move |_| {
             std::thread::sleep(Duration::from_secs(3600));
@@ -399,6 +401,7 @@ impl Component for Launcher {
         let Some(message) = self.handle_graphics(message, context) else { return };
         let Some(message) = self.handle_input(message, context) else { return };
         let Some(message) = self.handle_wmmt3(message, context) else { return };
+        let Some(message) = self.handle_game_settings(message, context) else { return };
         let Some(message) = self.handle_vpn(message, context) else { return };
         let Some(message) = self.handle_room(message, context) else { return };
         match message {
@@ -408,7 +411,6 @@ impl Component for Launcher {
 
                 if self.nav_tag == "room" {
                     let keychip_missing = self
-                        .system
                         .keychip
                         .as_deref()
                         .map(|v| v.trim().is_empty())
@@ -424,7 +426,7 @@ impl Component for Launcher {
                             message: t!("app.keychip_serial_is_not_configured").to_string(),
                             goto: None,
                         };
-                        self.nav_tag = "system".to_string();
+                        self.nav_tag = "settings".to_string();
                     } else {
                         self.room_refresh_list(context, false);
                         self.room_try_resume(context);
@@ -645,23 +647,17 @@ impl Component for Launcher {
         let menu_items = vec![
             nav_item("games", &t!("nav.games"), Symbol::Play),
             nav_item("room", &t!("nav.in_store_battles"), Symbol::Shop),
-            nav_item("graphics", &t!("nav.graphics"), Symbol::Video),
             nav_item("network", &t!("nav.network"), Symbol::Globe),
             nav_item("vpn", &t!("nav.vpn"), Symbol::Permissions),
-            nav_item("system", &t!("nav.system"), Symbol::Setting),
-            nav_item("input", &t!("nav.input"), Symbol::Keyboard),
             nav_item("settings", &t!("nav.settings"), Symbol::Repair),
         ];
 
         let content: View = match self.nav_tag.as_str() {
             "cards" => self.cards_page(context),
-            "wmmt3" => self.wmmt3_settings_page(context),
-            "graphics" => self.graphics_page(context),
+            "game_settings" => self.game_settings_page(context),
             "network" => self.network_page(context),
             "room" => self.room_page(context),
             "vpn" => self.vpn_page(context),
-            "system" => self.system_page(context),
-            "input" => self.input_page(context),
             "settings" => self.settings_page(context),
             _ => self.games_page(context),
         };
@@ -936,8 +932,8 @@ impl Launcher {
             }
             Message::KeychipChanged(text) => {
                 let t = text.trim().to_string();
-                self.system.keychip = (!t.is_empty()).then_some(t);
-                self.queue_save(Self::SAVE_SYSTEM, context);
+                self.keychip = (!t.is_empty()).then_some(t);
+                self.queue_save(Self::SAVE_KEYCHIP, context);
             }
             Message::SaveDebounceTick(token) => self.flush_pending_saves(token),
             Message::SeatSelected(Some(index)) => {
@@ -1425,7 +1421,7 @@ impl Launcher {
         None
     }
 
-    const SAVE_SYSTEM: u32 = 1;
+    const SAVE_KEYCHIP: u32 = 1;
     const SAVE_NET: u32 = 1 << 1;
     const SAVE_INPUT: u32 = 1 << 2;
     const SAVE_VPN: u32 = 1 << 3;
@@ -1440,13 +1436,19 @@ impl Launcher {
         });
     }
 
+    /// Saves at once the changes still waiting for their debounce, for a step that needs
+    /// them on disk now (switching to another game's settings, launching a game).
+    pub(in crate::reactor_app) fn save_pending_now(&mut self) {
+        self.flush_pending_saves(self.save_debounce_gen);
+    }
+
     pub(in crate::reactor_app) fn flush_pending_saves(&mut self, token: u32) {
         if token != self.save_debounce_gen {
             return;
         }
         let pending = std::mem::replace(&mut self.pending_saves, 0);
-        if pending & Self::SAVE_SYSTEM != 0 {
-            self.save_system();
+        if pending & Self::SAVE_KEYCHIP != 0 {
+            self.save_keychip();
         }
         if pending & Self::SAVE_NET != 0 {
             self.save_net();

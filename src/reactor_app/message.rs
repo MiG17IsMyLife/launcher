@@ -174,16 +174,16 @@ pub enum Message {
 
     InputCaptureTimeout(u32),
 
-    /// The Input page's game tab was chosen, by its title.
-    InputTabSelected(Option<String>),
+    /// A tab of the game's settings page was chosen, by its title.
+    SettingsTabSelected(Option<String>),
     /// A WMMT3 setting was given a value (`None` when its control was emptied).
     Wmmt3SettingChanged(&'static str, Option<String>),
     /// Capture a WMMT3 button binding from the device.
     Wmmt3CaptureStart(&'static str),
     /// A WMMT3 button binding was captured: epoch, setting key, value.
     Wmmt3Captured(u32, &'static str, String),
-    /// The capture got a POV hat direction, which cannot be bound.
-    Wmmt3CapturedDpad(u32),
+    /// The capture got an input KittenTools cannot use: epoch, text key of the reason.
+    Wmmt3CaptureUnusable(u32, &'static str),
     Wmmt3DevicesScanned(Box<Vec<rawinput::GameDevice>>),
 
     InputCaptureTick(u32),

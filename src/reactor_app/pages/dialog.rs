@@ -6,6 +6,7 @@ use rust_i18n::t;
 use crate::storage::{GameRecord, Loader};
 
 use crate::reactor_app::Launcher;
+use super::game_settings::SettingsTab;
 use super::input::INPUT_CAPTURE_SECS;
 use crate::reactor_app::message::{CompanionKind, Dialog, Message};
 use crate::reactor_app::state::PendingAdd;
@@ -284,7 +285,7 @@ impl Launcher {
                         FileKind::Elf32 => Loader::Kitten,
                         _ => Loader::Mice,
                     };
-                    self.library.games.push(GameRecord {
+                    self.add_game(GameRecord {
                         id: make_id(),
                         path: path.display().to_string(),
                         name,
@@ -308,13 +309,13 @@ impl Launcher {
                         last_played: None,
                         added_at: now_secs(),
                     });
-                    self.store.save_library(&self.library);
                 }
             }
             Dialog::ConfirmRemove { index, .. } => {
                 if self.library.games.get(index).is_some() {
                     let g = self.library.games.remove(index);
                     self.store.remove_image(&g.id);
+                    self.store.remove_game_settings(&g);
                     self.store.save_library(&self.library);
 
                     self.drop_index = None;
@@ -334,6 +335,9 @@ impl Launcher {
                         match tag.as_str() {
 
                             "cards" => self.enter_cards(i, context),
+
+                            // Only an input problem leads to a game's settings.
+                            "game_settings" => self.open_game_settings(i, SettingsTab::Input, context),
 
                             "games" => {
                                 self.drop_index = Some(i);

@@ -246,7 +246,7 @@ impl Launcher {
 
         let game_id = entry.game_id.clone().unwrap_or_else(|| entry.name.clone());
         let game = entry.name.clone();
-        let keychip = self.system.keychip.clone().unwrap_or_default();
+        let keychip = self.keychip.clone().unwrap_or_default();
         if keychip.trim().is_empty() {
             self.dialog = Dialog::Error {
                 message: t!("page_room.keychip_serial_is_not_configured").to_string(),
@@ -543,7 +543,7 @@ impl Launcher {
         if self.room_status != RoomStatus::Idle {
             return;
         }
-        let keychip = self.system.keychip.clone().unwrap_or_default();
+        let keychip = self.keychip.clone().unwrap_or_default();
         let has_keychip = !keychip.trim().is_empty();
         let last_room_id = self.room.last_room_id.clone().unwrap_or_default();
         let last_password = self.room.last_room_password.clone().unwrap_or_default();

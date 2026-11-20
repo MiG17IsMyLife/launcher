@@ -12,7 +12,7 @@ use std::process::Child;
 
 use rust_i18n::t;
 
-use super::{check_initial_d_settings, CardKind, UiFeatures, GameFamily, LaunchInput, LaunchProblem, Prepared, Started, idas, initiald, serverbox};
+use super::{check_initial_d_settings, CardKind, Series, SettingsKind, UiFeatures, GameFamily, LaunchInput, LaunchProblem, Prepared, Started, idas, initiald, serverbox};
 use crate::db;
 use crate::loaders::{self, kitten};
 use crate::storage::{GameRecord, GraphicsConfig};
@@ -26,7 +26,8 @@ impl GameFamily for IdasLindbergh {
             graphics_patch: false,
             region: true,
             cards: true,
-            game_settings: false,
+            settings: SettingsKind::InitialD,
+            series: Series::InitialD,
             companion_executables: false,
             card_extension: "png",
         }

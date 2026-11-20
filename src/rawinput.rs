@@ -130,8 +130,75 @@ pub struct CapturedButton {
 
 #[derive(Clone, Debug)]
 pub struct CapturedAxis {
-
+    /// The HID usage's name (X, Y, …, Slider, Dial, Wheel).
     pub name: String,
+    /// The axis DirectInput makes of it, by the name KittenTools reads it by (X, Y, Z, RX,
+    /// RY, RZ, U, V); `None` when DirectInput puts it in none of those eight.
+    pub dinput: Option<&'static str>,
+}
+
+/// The axes of `DIJOYSTATE2` KittenTools reads, by its names for them (`idas_di.c`): the six
+/// fixed axes, then the two sliders.
+pub const DINPUT_AXES: [&str; 8] = ["X", "Y", "Z", "RX", "RY", "RZ", "U", "V"];
+
+const HID_USAGE_PAGE_SIMULATION: u16 = 0x02;
+
+/// The DirectInput axis of each value of a device, given as `(usage page, first usage, last
+/// usage)` in the order `HidP_GetValueCaps` lists them; the result names each value's first
+/// usage.
+///
+/// This is Windows' rule as Wine's DirectInput reproduces it (`dlls/dinput/joystick_hid.c`):
+/// X to Rz, and the simulation controls that stand for them, keep their own axis; a second
+/// value for an axis already taken, Slider, Dial and every other value go to the sliders, in
+/// the order of the list. The hat switch is a POV, not an axis.
+fn dinput_axis_names(values: &[(u16, u16, u16)]) -> Vec<Option<&'static str>> {
+    let mut taken = [false; 6];
+    let mut sliders = 0;
+    let mut names = Vec::with_capacity(values.len());
+    for &(page, first, last) in values {
+        let mut first_name = None;
+        for usage in first..=last {
+            // The axis the usage stands for: 0 to 5 are X to Rz.
+            let fixed = match (page, usage) {
+                (HID_USAGE_PAGE_GENERIC, HID_USAGE_HAT) => continue,
+                (HID_USAGE_PAGE_GENERIC, 0x30..=0x35) => Some((usage - 0x30) as usize),
+                (HID_USAGE_PAGE_SIMULATION, 0xC8) => Some(0), // steering
+                (HID_USAGE_PAGE_SIMULATION, 0xC4) => Some(1), // accelerator
+                (HID_USAGE_PAGE_GENERIC, 0x38) | (HID_USAGE_PAGE_SIMULATION, 0xBB) => Some(2), // wheel, throttle
+                (HID_USAGE_PAGE_SIMULATION, 0xBA | 0xC5) => Some(5), // rudder, brake
+                _ => None,
+            };
+            // Its place in DIJOYSTATE2's axes: its own, or else the next slider (6, 7, …).
+            let instance = match fixed {
+                Some(axis) if !taken[axis] => {
+                    taken[axis] = true;
+                    axis
+                }
+                _ => {
+                    sliders += 1;
+                    5 + sliders
+                }
+            };
+            if usage == first {
+                first_name = DINPUT_AXES.get(instance).copied();
+            }
+        }
+        names.push(first_name);
+    }
+    names
+}
+
+/// The usages a value capability covers, from its first to its last.
+fn usage_range(cap: &HIDP_VALUE_CAPS) -> (u16, u16) {
+    // SAFETY: `IsRange` tells which member of the union the HID parser filled in.
+    unsafe {
+        if cap.IsRange {
+            (cap.Anonymous.Range.UsageMin, cap.Anonymous.Range.UsageMax)
+        } else {
+            let usage = cap.Anonymous.NotRange.Usage;
+            (usage, usage)
+        }
+    }
 }
 
 static CAPTURE_SLOT: OnceLock<Mutex<Option<CapturedButton>>> = OnceLock::new();
@@ -846,12 +913,7 @@ unsafe fn handle_raw_input(lparam: LPARAM) {
         if cap.UsagePage != HID_USAGE_PAGE_GENERIC {
             continue;
         }
-        let (min, max) = if cap.IsRange {
-            (cap.Anonymous.Range.UsageMin, cap.Anonymous.Range.UsageMax)
-        } else {
-            let u = cap.Anonymous.NotRange.Usage;
-            (u, u)
-        };
+        let (min, max) = usage_range(cap);
         if !(min..=max).contains(&HID_USAGE_HAT) {
             continue;
         }
@@ -889,17 +951,21 @@ unsafe fn handle_raw_input(lparam: LPARAM) {
 
     let mut axis_prev = axis_state().lock().unwrap();
     let axis_vec = axis_prev.entry(key).or_default();
+    let values: Vec<(u16, u16, u16)> = vcaps
+        .iter()
+        .map(|cap| {
+            let (min, max) = usage_range(cap);
+            (cap.UsagePage, min, max)
+        })
+        .collect();
+    let dinput_names = dinput_axis_names(&values);
+
     let mut axis_index: u32 = 0;
-    for cap in vcaps.iter() {
-        if cap.UsagePage != HID_USAGE_PAGE_GENERIC {
+    for (cap_index, cap) in vcaps.iter().enumerate() {
+        let (page, min, max) = values[cap_index];
+        if page != HID_USAGE_PAGE_GENERIC {
             continue;
         }
-        let (min, max) = if cap.IsRange {
-            (cap.Anonymous.Range.UsageMin, cap.Anonymous.Range.UsageMax)
-        } else {
-            let u = cap.Anonymous.NotRange.Usage;
-            (u, u)
-        };
         if (min..=max).contains(&HID_USAGE_HAT) {
 
             continue;
@@ -933,6 +999,7 @@ unsafe fn handle_raw_input(lparam: LPARAM) {
             if slot.is_none() {
                 *slot = Some(CapturedAxis {
                     name: axis_usage_name(usage),
+                    dinput: dinput_names[cap_index],
                 });
             }
         }
@@ -946,7 +1013,41 @@ unsafe fn handle_raw_input(lparam: LPARAM) {
 
 #[cfg(test)]
 mod tests {
-    use super::{group_key, is_generic_driver_inf, is_top_level_collection};
+    use super::{dinput_axis_names, group_key, is_generic_driver_inf, is_top_level_collection};
+    use super::{HID_USAGE_PAGE_GENERIC as GENERIC, HID_USAGE_PAGE_SIMULATION as SIMULATION};
+
+    #[test]
+    fn fixed_axes_keep_their_names_wherever_they_are() {
+        // Rz listed before X, and the hat switch in between.
+        let values = [(GENERIC, 0x35, 0x35), (GENERIC, 0x39, 0x39), (GENERIC, 0x30, 0x30), (GENERIC, 0x31, 0x31)];
+        assert_eq!(dinput_axis_names(&values), vec![Some("RZ"), None, Some("X"), Some("Y")]);
+    }
+
+    #[test]
+    fn sliders_and_dials_take_u_then_v_in_list_order() {
+        let values = [(GENERIC, 0x37, 0x37), (GENERIC, 0x30, 0x30), (GENERIC, 0x36, 0x36), (GENERIC, 0x36, 0x36)];
+        assert_eq!(dinput_axis_names(&values), vec![Some("U"), Some("X"), Some("V"), None]);
+    }
+
+    #[test]
+    fn a_second_value_for_a_taken_axis_becomes_a_slider() {
+        // The wheel usage stands for Z, which the Z value took first.
+        let values = [(GENERIC, 0x32, 0x32), (GENERIC, 0x38, 0x38)];
+        assert_eq!(dinput_axis_names(&values), vec![Some("Z"), Some("U")]);
+    }
+
+    #[test]
+    fn simulation_controls_stand_for_axes() {
+        let values = [(SIMULATION, 0xC8, 0xC8), (SIMULATION, 0xC4, 0xC4), (SIMULATION, 0xC5, 0xC5)];
+        assert_eq!(dinput_axis_names(&values), vec![Some("X"), Some("Y"), Some("RZ")]);
+    }
+
+    #[test]
+    fn a_range_is_named_by_its_first_usage_and_takes_every_slot() {
+        // X to Z in one value, then a slider: the range takes X, Y and Z.
+        let values = [(GENERIC, 0x30, 0x32), (GENERIC, 0x36, 0x36)];
+        assert_eq!(dinput_axis_names(&values), vec![Some("X"), Some("U")]);
+    }
 
     #[test]
     fn same_device_shares_group_key() {
