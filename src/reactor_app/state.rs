@@ -45,3 +45,10 @@ pub(super) struct CardBaseCache {
 
     pub(super) result: Result<image::RgbaImage, String>,
 }
+
+#[derive(Clone)]
+pub(super) struct CardImage {
+    pub(super) bytes: Arc<[u8]>,
+    pub(super) width: f64,
+    pub(super) height: f64,
+}

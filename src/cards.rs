@@ -99,6 +99,56 @@ pub fn scan_cards(game_file: &Path) -> CardScan {
     scan
 }
 
+// KittenTools stores three 69-byte tracks in each card file.
+const WMMT3_CARD_BYTES: u64 = 3 * 69;
+
+pub fn is_wmmt3_card_name(name: &str) -> bool {
+    let path = Path::new(name);
+    path.file_name().is_some_and(|file| file == name)
+        && path
+            .extension()
+            .is_some_and(|ext| ext.eq_ignore_ascii_case("bin"))
+        && name.trim() == name
+        && !name.contains(';')
+        && !name.chars().any(char::is_control)
+}
+
+pub fn scan_wmmt3_cards_in(dir: &Path) -> CardScan {
+    let mut cards: Vec<_> = fs::read_dir(dir)
+        .into_iter()
+        .flatten()
+        .flatten()
+        .filter_map(|entry| {
+            let name = entry.file_name().into_string().ok()?;
+            if !is_wmmt3_card_name(&name) {
+                return None;
+            }
+            let metadata = entry.metadata().ok()?;
+            (metadata.is_file() && metadata.len() == WMMT3_CARD_BYTES).then(|| CardEntry {
+                path: entry.path(),
+                name,
+            })
+        })
+        .collect();
+    cards.sort_by(|a, b| a.name.cmp(&b.name));
+    CardScan { cards, active: None }
+}
+
+pub fn new_wmmt3_card_name_in(dir: &Path) -> String {
+    let stamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_nanos();
+    let mut name = format!("card_{stamp}.bin");
+    for suffix in 1.. {
+        if !dir.join(&name).exists() {
+            break;
+        }
+        name = format!("card_{stamp}_{suffix}.bin");
+    }
+    name
+}
+
 pub fn format_access_code(code: &str) -> String {
     let digits: Vec<char> = code.chars().collect();
     digits
@@ -269,6 +319,28 @@ mod tests {
             assert_eq!(digits.len(), 5, "{name}");
             assert!(digits.chars().all(|c| c.is_ascii_digit()), "{name}");
         }
+    }
+
+    #[test]
+    fn wmmt3_scan_lists_track_files_and_keeps_the_extension() {
+        let dir = crate::file_util::test_dir::fresh("wmmt3_cards");
+        fs::create_dir_all(dir.join("nested")).unwrap();
+        let tracks = [0u8; WMMT3_CARD_BYTES as usize];
+        fs::write(dir.join("Player.BIN"), tracks).unwrap();
+        fs::write(dir.join("Player.BIN.png"), tracks).unwrap();
+        fs::write(dir.join("too-short.bin"), [0u8; 4]).unwrap();
+        fs::write(dir.join("nested").join("other.bin"), tracks).unwrap();
+
+        let mut scan = scan_wmmt3_cards_in(&dir);
+        assert_eq!(scan.cards.len(), 1);
+        assert_eq!(scan.cards[0].name, "Player.BIN");
+        scan.active = Some("player.bin".into());
+        assert_eq!(scan.active_index(), Some(0));
+        let blank = new_wmmt3_card_name_in(&dir);
+        assert!(is_wmmt3_card_name(&blank));
+        assert!(!dir.join(blank).exists(), "kitten writes the file after the game issues the card");
+        assert!(!is_wmmt3_card_name("nested/other.bin"));
+        crate::file_util::test_dir::remove(&dir);
     }
 
     #[test]

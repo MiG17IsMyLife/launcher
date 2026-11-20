@@ -210,9 +210,9 @@ The ServerBox is **no longer started together with the game**. It is started on 
 
 ### 2. Adding games
 
-**"+ Add game"** in the top bar → the system file dialog, choosing an `.exe` / `.elf` / `ICF1`:
+**"+ Add game"** in the top bar opens the system file dialog with `.exe`, `.elf`, `ICF1`, and the extensionless `main` file used by Maximum Tune 3 / 3DX / 3DX+ visible by default.
 
-- **exe / elf**: in the background the CRC is computed by file type (PE → mice, ELF32 → kitten) and looked up in the database. On a match the game is added with the product name + build version (the cover is the **built-in cover image** named by the database's `image`, e.g. `logo_D8.png`); otherwise a naming dialog opens (the loader follows the file type: ELF → kitten, EXE → mice).
+- **exe / elf / main**: in the background the CRC is computed by file type (PE → mice, ELF32 → kitten) and looked up in the database. On a match the game is added with the product name + build version (the cover is the **built-in cover image** named by the database's `image`, e.g. `logo_D8.png`); otherwise a naming dialog opens (the loader follows the file type: ELF → kitten, EXE → mice).
 - **ICF1** (the encrypted version information file of IDAC/IDZ): decrypted with AES-128-CBC and a fixed key, checked with two CRC32s, and the appid and `major.minor.build` version (e.g. `SDGT 3.41.00`) are looked up as `game_id + version`. An id/version not in the database is an error.
 
 ### 3. Interface layout (Windows 11 Settings style)
@@ -258,11 +258,11 @@ The ServerBox is **no longer started together with the game**. It is started on 
 
 **Status bar at the bottom**: four status lights, server (probing TCP 443/80 of the address on the Settings page every 15 seconds) / VPN / room / update.
 
-## 4. Card selection (IDAS / Aime)
+## 4. Card selection
 
-Opened from a game row's expanded card → "Card selection" (slides in from the left). There are two modes depending on the loader:
+Open "Card selection" from the expanded game row. The game determines the card format.
 
-**PNG cards (kitten / mice)**:
+**Initial D PNG cards (kitten / mice)**
 
 - **Card display**: the built-in base image + the card image from the game folder **centred over the base image at its size** (moved down 4 px, and left 5 px for ID4), shown scaled to about 0.8 and laid out in as many columns as fit. Compositing is warmed up in batches and cached; on failure the card slot shows the reason and a status bar dialog sums them up.
 - **The base image follows the game** (embedded resources, **no longer replaceable at run time**): D4/D4kai → the ID4 base, D6 → the ID6 base, D8 → the ID8 base, everything else → the ID5 base.
@@ -270,10 +270,17 @@ Opened from a game row's expanded card → "Card selection" (slides in from the 
 - **Blank car card**: a "Blank car card" tile is always first in the list; clicking it makes a random `InidCrdXXXXX.png` name the current card (a blank card is selected automatically when there are no cards at all).
 - **Clicking a card**: stores it in the game's `card` field (`library.json`; the old global `config.ini [card] cardfile` is still the fallback). The current card has an accent-coloured outline and an "In use" label.
 
-**Aime cards (segatools: IDAC/IDZ)**:
+**Aime cards (segatools, IDAC/IDZ)**
 
 - Cards are `.txt` files in the amdaemon folder's **`DEVICE\`** (content = a 20-digit access code). Scanning renames any file name to `<card number>.txt`, removes duplicates, and puts newer cards first by modification time.
 - "+ New car card" is first in the list: it writes a random 20-digit card number starting with `5` and refreshes. The card number is drawn over the card in groups of four.
+
+**Maximum Tune 3 / 3DX / 3DX+ cards (KittenTools)**
+
+- The card list shows 207-byte `.bin` files in the game's `cards` folder or the location set by `[wmmt3] card_dir`. When available, the matching `<filename>.bin.png` supplies the preview.
+- Selecting a card saves its filename to the game's library entry and sets `[wmmt3] card_file` on launch. With no launcher selection, KittenTools uses its configured card filename or its default `card.bin`.
+- The new-card tile selects an unused filename. KittenTools writes the data when the player buys a new card in the game.
+- The game's System tab has an automatic insertion toggle that sets `[wmmt3] card_auto_insert`. Games configured with `card_reader_port` use their external reader.
 
 A back button sits at the top of the page.
 
@@ -352,7 +359,7 @@ The games are grouped into families that are launched the same way (`src/games/`
 
 `games::launch_game` runs these in order (sections 1.1–1.7 describe what each family does), and adds the ServerBox's static IP between `prepare` and `start` for families with a ServerBox. The interface gathers a `LaunchInput` from the settings in effect and shows the result; a `LaunchProblem` names the page where the user can fix a missing setting. The game row and card page take their family-specific choices from these methods. The ServerBox row remains conditional on the matched build having a ServerBox CRC.
 
-**Wangan Midnight Maximum Tune 3 / 3DX / 3DX+** (`games/wmmt3/`): the launch copies kitten's files next to the game's `main`, writes the launcher's settings into `kitten\config.ini`, and starts `kitten.exe -b main`. KittenTools keeps every setting of these games in its `[wmmt3]` section (apart from `[sysconf] log_level`). The launcher offers them on the game's settings page: the Graphics tab (screen), the System tab (log level, free play, linked play, sound, load times, dongle) and the Input tab (the controls and the coin, card, test and service switches on the device of the input mode in use, the keyboard keys, force feedback); a setting is shown only while it has an effect (the window size without the cabinet's resolution, the second dongle on 3DX+, …), and its value is kept while hidden; `games/wmmt3/settings.rs` lists them with KittenTools' names and defaults, and must follow KittenTools' `wmmt3Config.def` when that changes. The values set there are kept in the `[wmmt3]` section of the game's own settings file, and written into the game's `kitten\config.ini` at launch together with `[sysconf] log_level` (System tab); a setting never changed in the launcher is not written, and the rest of the file stays as it is, to be edited by hand (the card reader and card settings, until the card page covers them). These games need no keychip, region or subnet, and have no card reader program, ServerBox, test mode switch (the test button is a key) or card page yet. They are not offered in rooms: their linked play needs the cabinets in one /24 network that carries multicast, which the rooms do not provide. Their covers are `logo_wm3`, `logo_wm3dx` and `logo_wm3dxplus` (each with a `_big` version), shared by the regional versions.
+**Wangan Midnight Maximum Tune 3 / 3DX / 3DX+** (`games/wmmt3/`): the launch copies kitten's files next to the game's `main`, writes the launcher's settings into `kitten\config.ini`, and starts `kitten.exe -b main`. KittenTools keeps every setting of these games in its `[wmmt3]` section (apart from `[sysconf] log_level`). The launcher offers them on the game's settings page: the Graphics tab (screen), the System tab (log level, automatic card insertion, free play, linked play, sound, load times, dongle) and the Input tab (the controls and the coin, card, test and service switches on the device of the input mode in use, the keyboard keys, force feedback); a setting is shown only while it has an effect (the window size without the cabinet's resolution, the second dongle on 3DX+, …), and its value is kept while hidden; `games/wmmt3/settings.rs` lists them with KittenTools' names and defaults, and must follow KittenTools' `wmmt3Config.def` when that changes. The values set there are kept in the `[wmmt3]` section of the game's own settings file, and written into the game's `kitten\config.ini` at launch together with `[sysconf] log_level` (System tab); a setting never changed in the launcher is not written, and the rest of the file stays as it is, to be edited by hand. These games need no keychip, region or subnet, and use the built-in card reader in KittenTools by default. The test button is a key. They are not offered in rooms: their linked play needs the cabinets in one /24 network that carries multicast, which the rooms do not provide. Their covers are `logo_wm3`, `logo_wm3dx` and `logo_wm3dxplus` (each with a `_big` version), shared by the regional versions.
 
 **Adding a game family**: write `src/games/<family>.rs` implementing `GameFamily`, and return it from `family_of`. Shared steps (card reader, graphics patch, ServerBox, `initialD.ini`) are in their own modules; the loader modules in `src/loaders/` only render config files.
 

@@ -34,7 +34,7 @@ use self::pages::graphics::{GFX_AF_LEVELS, GFX_MSAA_LEVELS, GFX_RENDER_SCALE_LEV
 use self::pages::input::{FFB_MAX, INPUT_KINDS, INPUT_RATIO_DEFAULT, INPUT_RATIO_MAX, SHIFTER_TYPES};
 use self::pages::network::{VPN_AUTO_RETRIES, VPN_STABLE_RESET};
 use self::pages::system::{SYS_LOGLEVELS, SYS_SEATS};
-use self::state::{CardBaseCache, GameRuntime, PendingAdd, ServerBoxRuntime};
+use self::state::{CardBaseCache, CardImage, GameRuntime, PendingAdd, ServerBoxRuntime};
 use self::theme::system_uses_light_theme;
 
 const APP_ICON: &[u8] = include_bytes!("assets/launcher.ico");
@@ -215,7 +215,7 @@ pub struct Launcher {
 
     dpi_placeholder: Arc<Vec<u8>>,
 
-    compose_cache: RefCell<HashMap<PathBuf, Result<(Arc<[u8]>, f64, f64), Arc<str>>>>,
+    card_image_cache: RefCell<HashMap<PathBuf, Result<CardImage, Arc<str>>>>,
 
     base_cache: RefCell<Option<CardBaseCache>>,
 
@@ -365,7 +365,7 @@ impl Component for Launcher {
                     .expect("encode 1x1 placeholder png");
                 Arc::new(buf.into_inner())
             },
-            compose_cache: RefCell::new(HashMap::new()),
+            card_image_cache: RefCell::new(HashMap::new()),
             base_cache: RefCell::new(None),
             update_shared: Arc::new(Mutex::new(UpdateStatus::default())),
             poll_running: false,
@@ -446,12 +446,8 @@ impl Component for Launcher {
                 context.spawn_background(|_| {
                     let picked = filedialog::pick_open_file(
                         &[
-
-                            (
-                                &t!("app.all_supported"),
-                                "*.exe;*.elf;ICF1",
-                            ),
-                            (&t!("app.executable"), "*.exe;*.elf"),
+                            (&t!("app.all_supported"), "*.exe;*.elf;ICF1;main"),
+                            (&t!("app.executable"), "*.exe;*.elf;main"),
                             (&t!("app.icf1_file"), "ICF1"),
                             (&t!("common.all_files"), "*.*"),
                         ],
@@ -482,63 +478,44 @@ impl Component for Launcher {
                 }
             }
 
-            Message::CardsScanned(scan) => self.apply_cards_scanned(scan, context),
-            Message::CardClicked(index) => {
-                let Some(gi) = self.cards_game else {
-                    return;
-                };
-                let Some(name) = self.cards.cards.get(index).map(|c| c.name.clone()) else {
-                    return;
-                };
-
-                if let Some(rec) = self.library.games.get_mut(gi) {
-                    rec.card = Some(name.clone());
-                    self.store.save_library(&self.library);
-                    self.cards.active = Some(name.clone());
-                } else {
-                    self.dialog = Dialog::Error {
-                        message: t!("app.failed_to_save_card_selection")
-                        .to_string(),
-                    };
+            Message::CardsScanned(seq, scan) if self.is_current_card_page(seq) => {
+                self.apply_cards_scanned(*scan, context);
+            }
+            Message::CardClicked(index) if self.nav_tag == "cards" => {
+                if let Some(card) = self.cards.cards.get(index) {
+                    self.select_card(card.name.clone());
                 }
             }
-            Message::CardsLoadTick => self.warm_card_cache(context),
-            Message::AimeCardCreate => {
-                if self.card_kind != crate::games::CardKind::Aime {
-                    return;
-                }
+            Message::CardsLoadTick(seq) if self.is_current_card_page(seq) => {
+                self.warm_card_cache(context);
+            }
+            Message::AimeCardCreate
+                if self.nav_tag == "cards" && self.card_kind == crate::games::CardKind::Aime =>
+            {
                 let Some(dir) = self.aime_device_dir() else {
                     self.dialog = Dialog::Error {
                         message: t!("app.amdaemon_exe_is_not_configured").to_string(),
                     };
                     return;
                 };
+                let seq = self.card_enter_seq;
                 context.spawn_background(move |_| {
-                    Message::AimeCardCreated(cards::create_aime_card_in(&dir).map_err(|e| e.to_string()))
+                    let result = cards::create_aime_card_in(&dir)
+                        .map(|_| ())
+                        .map_err(|error| error.to_string());
+                    Message::AimeCardCreated(seq, result)
                 });
             }
-            Message::AimeCardCreated(Ok(code)) => self.reload_aime_cards(code),
-            Message::AimeCardCreated(Err(e)) => {
-                self.dialog = Dialog::Error {
-                    message: t!("app.failed_to_create_card", error = e).to_string(),
-                };
-            }
-            Message::BlankCardSelect => {
-
-                let name = cards::blank_card_name();
-
-                if let Some(gi) = self.cards_game {
-                    if let Some(rec) = self.library.games.get_mut(gi) {
-                        rec.card = Some(name.clone());
-                        self.store.save_library(&self.library);
-                        self.cards.active = Some(name.clone());
-                    } else {
-                        self.dialog = Dialog::Error {
-                            message: t!("app.failed_to_save_card_selection")
-                            .to_string(),
-                        };
-                    }
+            Message::AimeCardCreated(seq, result) if self.is_current_card_page(seq) => match result {
+                Ok(()) => self.reload_aime_cards(),
+                Err(error) => {
+                    self.dialog = Dialog::Error {
+                        message: t!("app.failed_to_create_card", error = error).to_string(),
+                    };
                 }
+            },
+            Message::BlankCardSelect if self.nav_tag == "cards" => {
+                self.select_blank_card();
             }
             Message::BackToGames => {
                 self.nav_tag = "games".to_string();

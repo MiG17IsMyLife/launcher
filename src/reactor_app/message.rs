@@ -46,7 +46,7 @@ pub enum Message {
 
     IcfIdentified(Box<IcfPayload>),
     ServerPolled(ServerState),
-    CardsScanned(Box<CardScan>),
+    CardsScanned(u32, Box<CardScan>),
     CardClicked(usize),
     WindowResized(WindowSize),
     CardSlideTick(f64),
@@ -97,11 +97,11 @@ pub enum Message {
 
     CardComposeFailed(String),
 
-    CardsLoadTick,
+    CardsLoadTick(u32),
 
     AimeCardCreate,
 
-    AimeCardCreated(Result<String, String>),
+    AimeCardCreated(u32, Result<(), String>),
 
     BlankCardSelect,
 

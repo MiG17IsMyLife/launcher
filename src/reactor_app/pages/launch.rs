@@ -88,7 +88,7 @@ impl Launcher {
         };
         self.launch_overlay = Some(index);
 
-        let card = rec.card.clone().or_else(|| self.store.load_card());
+        let card = self.selected_card(&rec);
         let input = self.launch_input(&rec, card);
 
         context.spawn_background(move |_| match games::launch_game(&input) {

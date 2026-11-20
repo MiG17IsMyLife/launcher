@@ -247,11 +247,17 @@ impl Launcher {
                 .map(|r| r.index)
                 == Some(index);
 
-            let cards_desc = match game.card.clone().or_else(|| self.store.load_card()) {
+            let cards_desc = match self.selected_card(game) {
                 Some(c) => {
                     let extension = features.card_extension;
-                    let suffix = format!(".{extension}");
-                    let file = if c.ends_with(&suffix) { c } else { format!("{c}{suffix}") };
+                    let has_extension = Path::new(&c)
+                        .extension()
+                        .is_some_and(|ext| ext.eq_ignore_ascii_case(extension));
+                    let file = if has_extension {
+                        c
+                    } else {
+                        format!("{c}.{extension}")
+                    };
                     t!("page_games.current_card", file = file).to_string()
                 }
                 None => t!("page_games.not_selected").to_string(),

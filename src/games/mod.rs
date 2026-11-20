@@ -185,6 +185,7 @@ pub enum CardKind {
     Id6,
     Id8,
     Aime,
+    Wmmt3,
 }
 
 /// What the launcher needs to know about one family of games.
@@ -366,7 +367,7 @@ mod tests {
             (Loader::Segatools, Some("SDGT"), UiFeatures { test_mode: false, graphics_patch: false, region: true, cards: true, settings: SettingsKind::InitialD, series: Series::InitialD, companion_executables: true, card_extension: "txt" }),
             (Loader::Segatools, Some("SDDF"), UiFeatures { test_mode: false, graphics_patch: false, region: true, cards: true, settings: SettingsKind::InitialD, series: Series::InitialD, companion_executables: true, card_extension: "txt" }),
             (Loader::Segatools, None, UiFeatures { test_mode: false, graphics_patch: false, region: true, cards: true, settings: SettingsKind::InitialD, series: Series::InitialD, companion_executables: true, card_extension: "txt" }),
-            (Loader::Kitten, Some("W3P"), UiFeatures { test_mode: false, graphics_patch: false, region: false, cards: false, settings: SettingsKind::Wmmt3, series: Series::WanganMidnight, companion_executables: false, card_extension: "bin" }),
+            (Loader::Kitten, Some("W3P"), UiFeatures { test_mode: false, graphics_patch: false, region: false, cards: true, settings: SettingsKind::Wmmt3, series: Series::WanganMidnight, companion_executables: false, card_extension: "bin" }),
         ];
         for (loader, id, expected) in cases {
             let rec = record(loader, id);
@@ -391,6 +392,9 @@ mod tests {
             (Loader::Segatools, Some("SDGT"), CardKind::Aime),
             (Loader::Segatools, None, CardKind::Id5),
             (Loader::Segatools, Some("UNKNOWN"), CardKind::Id5),
+            (Loader::Kitten, Some("WM3"), CardKind::Wmmt3),
+            (Loader::Kitten, Some("W3X"), CardKind::Wmmt3),
+            (Loader::Kitten, Some("W3P"), CardKind::Wmmt3),
         ];
         for (loader, id, expected) in cases {
             let rec = record(loader, id);

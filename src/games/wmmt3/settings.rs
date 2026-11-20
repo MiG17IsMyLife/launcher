@@ -264,6 +264,12 @@ pub const GRAPHICS_SECTIONS: &[Section] = &[Section {
 /// `[sysconf]`, which is not a `[wmmt3]` key).
 pub const SYSTEM_SECTIONS: &[Section] = &[
     Section {
+        title: "wmmt3.section_card",
+        input_mode: None,
+        switch: None,
+        settings: &[setting("card_auto_insert", "page_system.auto_card_insert", Kind::Toggle, "false")],
+    },
+    Section {
         title: "wmmt3.section_coins",
         input_mode: None,
         switch: None,

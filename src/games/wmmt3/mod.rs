@@ -8,9 +8,8 @@
 //! settings page ([`settings`]), and writes only the ones set there; the rest of the file
 //! stays as it is, so it can still be edited by hand.
 //!
-//! These games need no keychip, region or subnet, and have no card reader program, no
-//! ServerBox and no test mode switch (the test button is a key). Linked play is not offered
-//! through the launcher's rooms.
+//! Cards use kitten's built-in reader. These games need no keychip, region or subnet,
+//! and have no ServerBox or test mode switch. Linked play uses the game's own settings.
 
 use std::path::{Path, PathBuf};
 use std::process::Child;
@@ -20,6 +19,7 @@ use rust_i18n::t;
 use super::{
     CardKind, GameFamily, LaunchInput, LaunchProblem, Prepared, Series, SettingsKind, Started, UiFeatures, game_dir_of,
 };
+use crate::cards::{self, CardScan};
 use crate::ini;
 use crate::loaders::{self, kitten};
 use crate::storage::GameRecord;
@@ -43,6 +43,49 @@ pub fn is_wmmt3_game(record: &GameRecord) -> bool {
 
 pub struct Wmmt3;
 
+pub struct BuiltInCardReader {
+    directory: PathBuf,
+    filename: String,
+}
+
+impl BuiltInCardReader {
+    /// KittenTools uses the game directory to resolve relative card paths.
+    pub fn load(game_dir: &Path) -> Option<Self> {
+        let section = ini::SectionReader::load(&kitten::config_path(game_dir), settings::SECTION);
+        if card_setting(&section, "card_reader_port").is_some() {
+            return None;
+        }
+        let directory = card_setting(&section, "card_dir").unwrap_or_else(|| "cards".into());
+        let filename = card_setting(&section, "card_file").unwrap_or_else(|| "card.bin".into());
+        Some(Self {
+            directory: game_dir.join(directory),
+            filename,
+        })
+    }
+
+    pub fn scan(self) -> CardScan {
+        CardScan {
+            active: cards::is_wmmt3_card_name(&self.filename).then_some(self.filename),
+            ..cards::scan_wmmt3_cards_in(&self.directory)
+        }
+    }
+
+    pub fn new_card_name(&self) -> String {
+        cards::new_wmmt3_card_name_in(&self.directory)
+    }
+}
+
+fn card_setting(config: &ini::SectionReader, key: &str) -> Option<String> {
+    let value = config.get(key)?;
+    // KittenTools' INI reader recognizes a semicolon preceded by whitespace as a comment.
+    let end = value
+        .match_indices(';')
+        .find(|(index, _)| *index == 0 || value.as_bytes()[index - 1].is_ascii_whitespace())
+        .map_or(value.len(), |(index, _)| index);
+    let value = value[..end].trim_end();
+    (!value.is_empty()).then(|| value.to_string())
+}
+
 impl GameFamily for Wmmt3 {
     fn ui_features(&self) -> UiFeatures {
         UiFeatures {
@@ -50,7 +93,7 @@ impl GameFamily for Wmmt3 {
             graphics_patch: false,
             companion_executables: false,
             region: false,
-            cards: false,
+            cards: true,
             settings: SettingsKind::Wmmt3,
             series: Series::WanganMidnight,
             card_extension: "bin",
@@ -58,8 +101,7 @@ impl GameFamily for Wmmt3 {
     }
 
     fn card_kind(&self, _record: &GameRecord) -> CardKind {
-        // The game row offers no card page for these games yet.
-        CardKind::default()
+        CardKind::Wmmt3
     }
 
     fn has_serverbox(&self) -> bool {
@@ -77,7 +119,7 @@ impl GameFamily for Wmmt3 {
                 t!("launch.cannot_determine_kitten_tool_directory", loader = kitten_exe.display()).to_string()
             })?;
             let loader = kitten::install(tool_dir, Path::new(&input.record.path))?;
-            write_settings(&kitten::config_path(&game_dir_of(&input.record)), input)?;
+            write_settings(&game_dir_of(&input.record), input)?;
             Ok(loader)
         };
         let loader = deploy().map_err(|e| LaunchProblem::failed(t!("page_launch.game_launch_failed", error = e)))?;
@@ -109,14 +151,27 @@ fn config_keys(input: &LaunchInput) -> Vec<(&'static str, &'static str, String)>
 }
 
 /// Sets the launcher's keys in kitten's `config.ini`, keeping everything else in it.
-fn write_settings(config: &Path, input: &LaunchInput) -> Result<(), String> {
-    let failed = |e: std::io::Error| t!("wmmt3.failed_to_write_config", path = config.display(), error = e).to_string();
+fn write_settings(game_dir: &Path, input: &LaunchInput) -> Result<(), String> {
+    let config = kitten::config_path(game_dir);
+    let failed = |error: std::io::Error| {
+        t!("wmmt3.failed_to_write_config", path = config.display(), error = error).to_string()
+    };
     if let Some(dir) = config.parent() {
         std::fs::create_dir_all(dir).map_err(failed)?;
     }
-    let keys = config_keys(input);
+    let mut keys = config_keys(input);
+    let selected = input.card.as_deref().filter(|name| cards::is_wmmt3_card_name(name));
+    if let Some(card) = selected
+        && let Some(reader) = BuiltInCardReader::load(game_dir)
+    {
+        std::fs::create_dir_all(&reader.directory).map_err(|error| {
+            t!("launch.failed_to_create_directory", dest = reader.directory.display(), error = error)
+                .to_string()
+        })?;
+        keys.push((settings::SECTION, "card_file", card.to_string()));
+    }
     let entries: Vec<(&str, &str, &str)> = keys.iter().map(|(s, k, v)| (*s, *k, v.as_str())).collect();
-    ini::set_values(config, &entries).map_err(failed)
+    ini::set_values(&config, &entries).map_err(failed)
 }
 
 #[cfg(test)]
@@ -166,13 +221,55 @@ mod tests {
 
         let mut input = test_input::input(Loader::Kitten, Some("W3P"));
         input.wmmt3 = Wmmt3Settings::from_pairs(&[("free_play", "true")]);
-        write_settings(&config, &input).unwrap();
+        write_settings(&dir, &input).unwrap();
 
         let text = std::fs::read_to_string(&config).unwrap();
         assert!(text.contains("; Stretch\nstretch = true\n"), "the other keys and comments stay:\n{text}");
         assert!(text.contains("free_play = true"), "{text}");
         assert!(!text.contains("free_play = false"), "{text}");
         remove(&dir);
+    }
+
+    #[test]
+    fn card_config_follows_the_loader_directory_and_applies_the_launcher_selection() {
+        let game = fresh("wmmt3_card_config");
+        let config = kitten::config_path(&game);
+        let defaults = BuiltInCardReader::load(&game).unwrap();
+        assert_eq!(defaults.directory, game.join("cards"));
+        assert_eq!(defaults.filename, "card.bin");
+        std::fs::create_dir_all(config.parent().unwrap()).unwrap();
+        write(&config, b"[wmmt3]\ncard_dir = custom cards ; card storage\ncard_file = previous.bin\ncard_reader_port = ; internal\n");
+
+        let mut input = test_input::input(Loader::Kitten, Some("W3X"));
+        input.card = None;
+        write_settings(&game, &input).unwrap();
+        assert_eq!(BuiltInCardReader::load(&game).unwrap().filename, "previous.bin");
+
+        input.card = Some("Selected.BIN".into());
+        input.wmmt3 = Wmmt3Settings::from_pairs(&[("card_auto_insert", "true")]);
+        write_settings(&game, &input).unwrap();
+        let applied = BuiltInCardReader::load(&game).unwrap();
+        assert_eq!(applied.directory, game.join("custom cards"));
+        assert_eq!(applied.filename, "Selected.BIN");
+        assert_eq!(ini::read_value(&config, "wmmt3", "card_auto_insert").as_deref(), Some("true"));
+        assert!(applied.directory.is_dir());
+        assert!(!applied.directory.join(applied.filename).exists());
+        remove(&game);
+    }
+
+    #[test]
+    fn external_card_reader_keeps_its_loader_settings() {
+        let game = fresh("wmmt3_external_reader");
+        let config = kitten::config_path(&game);
+        std::fs::create_dir_all(config.parent().unwrap()).unwrap();
+        write(&config, b"[wmmt3]\ncard_file = previous.bin\ncard_reader_port = COM3\n");
+
+        let mut input = test_input::input(Loader::Kitten, Some("WM3"));
+        input.card = Some("Selected.bin".into());
+        write_settings(&game, &input).unwrap();
+        assert!(BuiltInCardReader::load(&game).is_none());
+        assert_eq!(ini::read_value(&config, "wmmt3", "card_file").as_deref(), Some("previous.bin"));
+        remove(&game);
     }
 
     #[test]
@@ -189,12 +286,14 @@ mod tests {
         input.record.path = game.join("main").to_string_lossy().into_owned();
         input.settings.kitten_path = Some(tools.join("kitten.exe").to_string_lossy().into_owned());
         input.wmmt3 = Wmmt3Settings::from_pairs(&[("input_mode", "2")]);
+        input.card = Some("new-card.bin".into());
 
         let prepared = Wmmt3.prepare(&input).unwrap_or_else(|p| panic!("{}", p.message));
         assert_eq!(prepared.loader, game.join("kitten.exe"));
         assert!(game.join("kitten.exe").is_file());
         let config = std::fs::read_to_string(game.join("kitten").join("config.ini")).unwrap();
         assert!(config.contains("input_mode = 2"), "{config}");
+        assert_eq!(BuiltInCardReader::load(&game).unwrap().filename, "new-card.bin");
         remove(&root);
     }
 
@@ -204,7 +303,7 @@ mod tests {
         let config = dir.join("kitten").join("config.ini");
         let mut input = test_input::input(Loader::Kitten, Some("W3P"));
         input.wmmt3 = Wmmt3Settings::from_pairs(&[("free_play", "false")]);
-        write_settings(&config, &input).unwrap();
+        write_settings(&dir, &input).unwrap();
         assert!(std::fs::read_to_string(&config).unwrap().contains("free_play = false"));
         remove(&dir);
     }
