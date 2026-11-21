@@ -41,6 +41,14 @@ pub fn is_wmmt3_game(record: &GameRecord) -> bool {
     record.loader == crate::storage::Loader::Kitten && is_wmmt3(record.game_id.as_deref())
 }
 
+/// The game id of WMMT3 itself: the only one of these games that takes over a WMMT2 card.
+const TAKES_OVER_WMMT2_CARDS: &str = "WM3";
+
+/// Whether the game takes over a WMMT2 card, so its card list shows them too.
+pub fn takes_over_wmmt2_cards(record: &GameRecord) -> bool {
+    record.game_id.as_deref() == Some(TAKES_OVER_WMMT2_CARDS)
+}
+
 pub struct Wmmt3;
 
 pub struct BuiltInCardReader {
@@ -63,10 +71,12 @@ impl BuiltInCardReader {
         })
     }
 
-    pub fn scan(self) -> CardScan {
+    /// The cards in the reader's folder. WMMT2 cards are listed only when `include_wmmt2_cards`
+    /// is set ([`takes_over_wmmt2_cards`]).
+    pub fn scan(self, include_wmmt2_cards: bool) -> CardScan {
         CardScan {
             active: cards::is_wmmt3_card_name(&self.filename).then_some(self.filename),
-            ..cards::scan_wmmt3_cards_in(&self.directory)
+            ..cards::scan_wmmt3_cards_in(&self.directory, include_wmmt2_cards)
         }
     }
 
@@ -188,6 +198,14 @@ mod tests {
         assert!(is_wmmt3(Some("W3P")));
         assert!(!is_wmmt3(Some("SBQZ")));
         assert!(!is_wmmt3(None));
+    }
+
+    #[test]
+    fn only_wmmt3_takes_over_wmmt2_cards() {
+        let takes_over = |id| takes_over_wmmt2_cards(&test_input::input(Loader::Kitten, Some(id)).record);
+        assert!(takes_over("WM3"));
+        assert!(!takes_over("W3X"));
+        assert!(!takes_over("W3P"));
     }
 
     #[test]

@@ -99,8 +99,12 @@ pub fn scan_cards(game_file: &Path) -> CardScan {
     scan
 }
 
-// KittenTools stores three 69-byte tracks in each card file.
-const WMMT3_CARD_BYTES: u64 = 3 * 69;
+// The reader writes three 69-byte tracks to a card, and KittenTools keeps all three in each card file.
+const CARD_TRACK_BYTES: u64 = 69;
+const WMMT3_CARD_BYTES: u64 = 3 * CARD_TRACK_BYTES;
+// A WMMT2 card holds its data on the first track only. Of the WMMT3 games, only WMMT3 itself reads
+// one, to take the player's data over; KittenTools reads the two missing tracks as blank.
+const WMMT2_CARD_BYTES: u64 = CARD_TRACK_BYTES;
 
 pub fn is_wmmt3_card_name(name: &str) -> bool {
     let path = Path::new(name);
@@ -113,7 +117,9 @@ pub fn is_wmmt3_card_name(name: &str) -> bool {
         && !name.chars().any(char::is_control)
 }
 
-pub fn scan_wmmt3_cards_in(dir: &Path) -> CardScan {
+/// The card files in `dir`, including WMMT2 cards when `include_wmmt2_cards` is set.
+pub fn scan_wmmt3_cards_in(dir: &Path, include_wmmt2_cards: bool) -> CardScan {
+    let is_card_size = |bytes: u64| bytes == WMMT3_CARD_BYTES || (include_wmmt2_cards && bytes == WMMT2_CARD_BYTES);
     let mut cards: Vec<_> = fs::read_dir(dir)
         .into_iter()
         .flatten()
@@ -124,7 +130,7 @@ pub fn scan_wmmt3_cards_in(dir: &Path) -> CardScan {
                 return None;
             }
             let metadata = entry.metadata().ok()?;
-            (metadata.is_file() && metadata.len() == WMMT3_CARD_BYTES).then(|| CardEntry {
+            (metadata.is_file() && is_card_size(metadata.len())).then(|| CardEntry {
                 path: entry.path(),
                 name,
             })
@@ -331,7 +337,7 @@ mod tests {
         fs::write(dir.join("too-short.bin"), [0u8; 4]).unwrap();
         fs::write(dir.join("nested").join("other.bin"), tracks).unwrap();
 
-        let mut scan = scan_wmmt3_cards_in(&dir);
+        let mut scan = scan_wmmt3_cards_in(&dir, false);
         assert_eq!(scan.cards.len(), 1);
         assert_eq!(scan.cards[0].name, "Player.BIN");
         scan.active = Some("player.bin".into());
@@ -340,6 +346,19 @@ mod tests {
         assert!(is_wmmt3_card_name(&blank));
         assert!(!dir.join(blank).exists(), "kitten writes the file after the game issues the card");
         assert!(!is_wmmt3_card_name("nested/other.bin"));
+        crate::file_util::test_dir::remove(&dir);
+    }
+
+    #[test]
+    fn wmmt2_cards_are_listed_only_when_asked_for() {
+        let dir = crate::file_util::test_dir::fresh("wmmt2_cards");
+        fs::write(dir.join("wmmt3.bin"), [0u8; WMMT3_CARD_BYTES as usize]).unwrap();
+        fs::write(dir.join("wmmt2.bin"), [0u8; WMMT2_CARD_BYTES as usize]).unwrap();
+        fs::write(dir.join("two-tracks.bin"), [0u8; 2 * CARD_TRACK_BYTES as usize]).unwrap();
+
+        let names = |scan: CardScan| scan.cards.into_iter().map(|card| card.name).collect::<Vec<_>>();
+        assert_eq!(names(scan_wmmt3_cards_in(&dir, false)), ["wmmt3.bin"]);
+        assert_eq!(names(scan_wmmt3_cards_in(&dir, true)), ["wmmt2.bin", "wmmt3.bin"]);
         crate::file_util::test_dir::remove(&dir);
     }
 

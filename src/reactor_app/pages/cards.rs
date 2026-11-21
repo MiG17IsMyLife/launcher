@@ -7,7 +7,7 @@ use rust_i18n::t;
 use windows_reactor::*;
 
 use crate::cards::{self, CardEntry, CardScan};
-use crate::games::wmmt3::BuiltInCardReader;
+use crate::games::wmmt3::{self, BuiltInCardReader};
 use crate::games::{CardKind, family_of, game_dir_of};
 use crate::reactor_app::Launcher;
 use crate::reactor_app::message::{Dialog, Message};
@@ -758,6 +758,7 @@ impl Launcher {
         };
         let path = PathBuf::from(&game.path);
         let kind = family_of(game).card_kind(game);
+        let include_wmmt2_cards = wmmt3::takes_over_wmmt2_cards(game);
         let wmmt3_reader = if kind == CardKind::Wmmt3 {
             let Some(reader) = BuiltInCardReader::load(&game_dir_of(game)) else {
                 self.dialog = Dialog::Error {
@@ -787,7 +788,7 @@ impl Launcher {
         let aime_dir = self.aime_device_dir();
         context.spawn_background(move |_| {
             let scan = match (kind, wmmt3_reader) {
-                (_, Some(reader)) => reader.scan(),
+                (_, Some(reader)) => reader.scan(include_wmmt2_cards),
                 (CardKind::Aime, None) => {
                     aime_dir.map_or_else(CardScan::default, |dir| cards::scan_aime_cards_in(&dir))
                 }
